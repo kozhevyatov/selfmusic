@@ -17,7 +17,12 @@ import {
   Heart,
   ListMusic,
   LoaderCircle,
+  Bookmark,
+  Moon,
   Radio,
+  RotateCcw,
+  RotateCw,
+  Timer,
   Repeat,
   Repeat1,
   Shuffle,
@@ -30,6 +35,8 @@ import {
 } from "./icons";
 import { EqualizerDialog } from "./SoundSettings";
 import { TrackMenuButton } from "./TrackMenu";
+import { Menu } from "./ui/menu";
+import { invalidate } from "@/lib/query";
 
 // ---------- общие элементы управления ----------
 
@@ -123,7 +130,47 @@ function RepeatButton({ className }: { className?: string }) {
   );
 }
 
+function SkipButton({ seconds, big }: { seconds: number; big?: boolean }) {
+  const Icon = seconds < 0 ? RotateCcw : RotateCw;
+  return (
+    <button
+      aria-label={seconds < 0 ? `Назад на ${-seconds} секунд` : `Вперёд на ${seconds} секунд`}
+      onClick={() => player.skip(seconds)}
+      className={cn("relative flex items-center justify-center rounded-full text-fg transition active:scale-95", big ? "size-12" : "size-10")}
+    >
+      <Icon className={big ? "size-8" : "size-6"} strokeWidth={1.6} />
+      <span className={cn("absolute font-extrabold", big ? "text-[10px]" : "text-[8px]")}>{Math.abs(seconds)}</span>
+    </button>
+  );
+}
+
 export function Transport({ big = false }: { big?: boolean }) {
+  const book = usePlayer((s) => s.book !== null);
+  if (book)
+    return (
+      <div className={cn("flex items-center", big ? "w-full justify-between" : "gap-2")}>
+        <SkipButton seconds={-15} big={big} />
+        <button
+          aria-label="Предыдущая глава"
+          onClick={() => player.prevChapter()}
+          className={cn("flex items-center justify-center rounded-full text-fg transition active:scale-95", big ? "size-14" : "size-10")}
+        >
+          <PrevFill className={big ? "size-8" : "size-5"} />
+        </button>
+        <PlayButton
+          size={big ? "xl" : "md"}
+          className={big ? "bg-accent text-accent-fg shadow-xl shadow-black/30" : "bg-fg text-bg hover:scale-105"}
+        />
+        <button
+          aria-label="Следующая глава"
+          onClick={() => player.nextChapter()}
+          className={cn("flex items-center justify-center rounded-full text-fg transition active:scale-95", big ? "size-14" : "size-10")}
+        >
+          <NextFill className={big ? "size-8" : "size-5"} />
+        </button>
+        <SkipButton seconds={30} big={big} />
+      </div>
+    );
   return (
     <div className={cn("flex items-center", big ? "w-full justify-between" : "gap-2")}>
       <ShuffleButton className={big ? "size-12" : ""} />
@@ -416,10 +463,110 @@ function Lyrics({ trackId }: { trackId: number }) {
   );
 }
 
+// ---------- аудиокнига: главы, скорость, таймер сна, закладка ----------
+
+function ChapterList() {
+  const book = usePlayer((s) => s.book);
+  usePlayer((s) => Math.floor(s.time)); // перерисовка текущей главы раз в секунду
+  const cur = player.chapterIndex();
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    box.current?.querySelector(`[data-ch="${cur}"]`)?.scrollIntoView({ block: "center" });
+  }, [cur]);
+  if (!book) return null;
+  return (
+    <div ref={box} className="flex flex-col gap-0.5">
+      {book.chapters.map((c, i) => (
+        <button
+          key={i}
+          data-ch={i}
+          onClick={() => player.jumpToChapter(i)}
+          className={cn("flex items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-white/5", i === cur && "bg-white/10")}
+        >
+          <span className="num w-6 text-right text-[13px] opacity-60">{i + 1}</span>
+          <span className={cn("min-w-0 flex-1 truncate text-[15px] font-semibold", i === cur ? "opacity-100" : "opacity-80")}>{c.title}</span>
+          <span className="num text-[13px] opacity-60">{formatTime(c.end - c.start)}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const SPEEDS = [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+
+function SpeedButton() {
+  const speed = usePlayer((s) => s.speed);
+  return (
+    <Menu
+      label="Скорость"
+      items={SPEEDS.map((v) => ({ label: `${v}×`, hint: v === speed ? "сейчас" : undefined, onSelect: () => player.setSpeed(v) }))}
+      trigger={(p) => (
+        <button {...p} className="flex h-10 min-w-16 items-center justify-center rounded-full bg-white/10 px-3 text-sm font-extrabold hover:bg-white/20">
+          {speed}×
+        </button>
+      )}
+    />
+  );
+}
+
+function SleepButton() {
+  const sleep = usePlayer((s) => s.sleep);
+  const book = usePlayer((s) => s.book !== null);
+  usePlayer((s) => Math.floor(s.time / 10)); // обновлять оставшееся время
+  const left = sleep?.until ? Math.max(0, Math.ceil((sleep.until - Date.now()) / 60000)) : null;
+  return (
+    <Menu
+      label="Таймер сна"
+      items={[
+        ...[5, 10, 15, 30, 45, 60, 90].map((m) => ({ label: `Через ${m} мин`, onSelect: () => player.setSleep(m) })),
+        { label: book ? "В конце главы" : "В конце трека", onSelect: () => player.setSleep("chapter") },
+        ...(sleep ? [{ separator: true as const }, { label: "Выключить таймер", onSelect: () => player.setSleep(null) }] : []),
+      ]}
+      trigger={(p) => (
+        <button
+          {...p}
+          aria-label="Таймер сна"
+          className={cn("flex h-10 items-center gap-2 rounded-full px-3 text-sm font-bold hover:bg-white/20", sleep ? "bg-white text-[#0d0d0f] hover:bg-white" : "bg-white/10")}
+        >
+          {sleep ? <Moon className="size-4" /> : <Timer className="size-4" />}
+          {sleep ? (left !== null ? `${left} мин` : book ? "До конца главы" : "До конца трека") : "Сон"}
+        </button>
+      )}
+    />
+  );
+}
+
+function BookmarkButton() {
+  const book = usePlayer((s) => s.book);
+  const track = useCurrentTrack();
+  if (!book || !track) return null;
+  return (
+    <button
+      aria-label="Добавить закладку"
+      onClick={async () => {
+        const ch = book.chapters[player.chapterIndex()];
+        const position = player.getState().time;
+        try {
+          await api.books.addBookmark(book.id, { track_id: track.id, position, comment: "" });
+          invalidate(["book", book.id]);
+          toast.success(`Закладка: ${ch?.title ?? track.title}, ${formatTime(position - (ch?.start ?? 0))}`);
+        } catch (err) {
+          toast.error((err as Error).message);
+        }
+      }}
+      className="flex size-10 items-center justify-center rounded-full bg-white/10 hover:bg-white/20"
+    >
+      <Bookmark className="size-4" />
+    </button>
+  );
+}
+
 // ---------- полноэкранный плеер ----------
 
 export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => void }) {
   const track = useCurrentTrack();
+  const book = usePlayer((s) => s.book);
+  usePlayer((s) => Math.floor(s.time)); // название текущей главы
   const [tab, setTab] = useState<"queue" | "lyrics">("queue");
   const [panelOpen, setPanelOpen] = useState(false);
   const [eqOpen, setEqOpen] = useState(false);
@@ -452,10 +599,12 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
       <div role="tablist" className="flex gap-1 rounded-full bg-white/8 p-1">
         {(
           [
-            ["queue", "Очередь", ListMusic],
+            ["queue", book ? "Главы" : "Очередь", ListMusic],
             ["lyrics", "Текст", TextQuote],
           ] as const
-        ).map(([id, label, Icon]) => (
+        )
+          .filter(([id]) => !(book && id === "lyrics"))
+          .map(([id, label, Icon]) => (
           <button
             key={id}
             role="tab"
@@ -470,7 +619,9 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">{tab === "queue" ? <QueueList /> : <Lyrics trackId={track.id} />}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {book ? <ChapterList /> : tab === "queue" ? <QueueList /> : <Lyrics trackId={track.id} />}
+      </div>
     </section>
   );
 
@@ -490,9 +641,13 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
           <ChevronDown />
         </button>
         <div className="min-w-0 text-center">
-          <div className="text-[11px] font-bold tracking-[0.1em] text-white/70 uppercase">Из альбома</div>
-          <Link to={`/albums/${track.album_id}`} onClick={onClose} className="block truncate text-sm font-bold hover:underline">
-            {track.album}
+          <div className="text-[11px] font-bold tracking-[0.1em] text-white/70 uppercase">{book ? "Аудиокнига" : "Из альбома"}</div>
+          <Link
+            to={book ? `/books/${book.id}` : `/albums/${track.album_id}`}
+            onClick={onClose}
+            className="block truncate text-sm font-bold hover:underline"
+          >
+            {book ? book.title : track.album}
           </Link>
         </div>
         <div className="flex items-center gap-2">
@@ -525,8 +680,12 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
           <div className="mx-auto flex w-full max-w-[520px] flex-col gap-5">
             <div className="flex items-end justify-between gap-4">
               <div className="min-w-0">
-                <h2 className="title-display truncate text-2xl sm:text-[32px]">{track.title}</h2>
-                {track.artist_id ? (
+                <h2 className="title-display truncate text-2xl sm:text-[32px]">
+                  {book ? (book.chapters[player.chapterIndex()]?.title ?? track.title) : track.title}
+                </h2>
+                {book ? (
+                  <div className="mt-1.5 truncate text-[17px] text-white/75">{book.author}</div>
+                ) : track.artist_id ? (
                   <Link to={`/artists/${track.artist_id}`} onClick={onClose} className="mt-1.5 block truncate text-[17px] text-white/75 hover:text-white">
                     {track.artist}
                   </Link>
@@ -534,7 +693,7 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
                   <div className="mt-1.5 truncate text-[17px] text-white/75">{track.artist}</div>
                 )}
               </div>
-              <FavButton className="size-12 text-white [&_svg]:size-6" />
+              {book ? <BookmarkButton /> : <FavButton className="size-12 text-white [&_svg]:size-6" />}
             </div>
             <div className="[--accent:#fff] [--faint:rgb(255_255_255/0.7)] [--fg:#fff] [--surface-3:rgb(255_255_255/0.18)]">
               <Seekbar big />
@@ -545,6 +704,10 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
             <div className="[--accent-ink:#fff] [--fg:#fff] [--muted:rgb(255_255_255/0.75)]">
               <Transport big />
             </div>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {book && <SpeedButton />}
+              <SleepButton />
+            </div>
             <div className="flex justify-center gap-2 lg:hidden">
               <button
                 onClick={() => {
@@ -553,8 +716,9 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
                 }}
                 className="flex h-10 items-center gap-2 rounded-full bg-white/10 px-4 text-sm font-bold"
               >
-                <ListMusic className="size-4" /> Очередь
+                <ListMusic className="size-4" /> {book ? "Главы" : "Очередь"}
               </button>
+              {!book && (
               <button
                 onClick={() => {
                   setTab("lyrics");
@@ -564,6 +728,7 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
               >
                 <TextQuote className="size-4" /> Текст
               </button>
+              )}
             </div>
           </div>
         </div>

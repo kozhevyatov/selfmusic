@@ -37,14 +37,14 @@ def _libs(db: Session, user: User, library: int | None = None) -> list[int]:
 
 def _visible_album(db: Session, user: User, album_id: int) -> Album:
     album = db.get(Album, album_id)
-    if not album or album.library_id not in _libs(db, user):
+    if not album or album.library_id not in allowed_library_ids(db, user, kind="any"):
         raise HTTPException(404, "Альбом не найден")
     return album
 
 
 def _visible_track(db: Session, user: User, track_id: int) -> Track:
     track = db.get(Track, track_id)
-    if not track or track.library_id not in _libs(db, user):
+    if not track or track.library_id not in allowed_library_ids(db, user, kind="any"):
         raise HTTPException(404, "Трек не найден")
     return track
 
@@ -65,12 +65,13 @@ def _artist_cards(db: Session, user: User, rows: list[tuple]) -> list[dict]:
 
 @router.get("/libraries")
 def my_libraries(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
-    ids = _libs(db, user)
+    ids = allowed_library_ids(db, user, kind="any")
     libs = db.scalars(select(Library).where(Library.id.in_(ids or [-1])).order_by(Library.name))
     return [
         {
             "id": lib.id,
             "name": lib.name,
+            "kind": lib.kind,
             "path": lib.path if user.is_admin else None,
             "track_count": lib.track_count,
             "album_count": lib.album_count,
@@ -87,7 +88,7 @@ def my_libraries(db: Session = Depends(get_db), user: User = Depends(get_current
 
 def _folder_scope(db: Session, user: User, library_id: int, path: str) -> tuple[Library, str]:
     lib = db.get(Library, library_id)
-    if not lib or not lib.enabled or lib.id not in allowed_library_ids(db, user):
+    if not lib or not lib.enabled or lib.id not in allowed_library_ids(db, user, kind="any"):
         raise HTTPException(404, "Папка не найдена")
     rel = "/".join(p for p in path.replace("\\", "/").split("/") if p and p not in (".", ".."))
     return lib, rel

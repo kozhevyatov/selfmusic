@@ -300,7 +300,7 @@ def _remove_empty_dirs(root: Path, start: Path) -> None:
 def delete_track(track_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     """Удалить файл с диска: свой загруженный — сам пользователь, любой — администратор."""
     track = db.get(Track, track_id)
-    if not track or track.library_id not in allowed_library_ids(db, user):
+    if not track or track.library_id not in allowed_library_ids(db, user, kind="any"):
         raise HTTPException(404, "Трек не найден")
     lib = db.get(Library, track.library_id)
     up = db.scalar(select(Upload).where(Upload.library_id == lib.id, Upload.path_hash == track.path_hash))
@@ -353,7 +353,7 @@ class AlbumTagChanges(BaseModel):
 
 def _track_ctx(db: Session, user: User, track_id: int) -> tuple[Track, Library, Path]:
     track = db.get(Track, track_id)
-    if not track or track.library_id not in allowed_library_ids(db, user):
+    if not track or track.library_id not in allowed_library_ids(db, user, kind="any"):
         raise HTTPException(404, "Трек не найден")
     lib = db.get(Library, track.library_id)
     root = Path(lib.path).resolve()
@@ -403,7 +403,7 @@ def put_tags(
 @router.get("/albums/{album_id}/tags")
 def get_album_tags(album_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     album = db.get(Album, album_id)
-    if not album or album.library_id not in allowed_library_ids(db, user):
+    if not album or album.library_id not in allowed_library_ids(db, user, kind="any"):
         raise HTTPException(404, "Альбом не найден")
     lib = db.get(Library, album.library_id)
     tracks = album_tracks(db, album.id)
@@ -441,7 +441,7 @@ def put_album_tags(
     album_id: int, data: AlbumTagChanges, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> dict:
     album = db.get(Album, album_id)
-    if not album or album.library_id not in allowed_library_ids(db, user):
+    if not album or album.library_id not in allowed_library_ids(db, user, kind="any"):
         raise HTTPException(404, "Альбом не найден")
     lib = db.get(Library, album.library_id)
     tracks = album_tracks(db, album.id)
@@ -482,7 +482,7 @@ def set_album_cover(
     user: User = Depends(get_current_user),
 ) -> dict:
     album = db.get(Album, album_id)
-    if not album or album.library_id not in allowed_library_ids(db, user):
+    if not album or album.library_id not in allowed_library_ids(db, user, kind="any"):
         raise HTTPException(404, "Альбом не найден")
     lib = db.get(Library, album.library_id)
     tracks = album_tracks(db, album.id)

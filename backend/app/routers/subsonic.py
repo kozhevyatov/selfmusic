@@ -30,7 +30,7 @@ from .. import mixes, ratelimit
 from ..access import allowed_library_ids
 from ..config import VERSION
 from ..media import content_type, cover_path, file_response, image_response, placeholder_cover, stream_track, track_file
-from ..models import Album, Artist, Library, Play, Playlist, PlaylistEntry, PlayQueue, Rating, Star, Track, User
+from ..models import Album, Artist, Bookmark, Library, Play, Playlist, PlaylistEntry, PlayQueue, Rating, Star, Track, User
 from ..queries import album_list_query, album_tracks, artists_with_counts, genres, search_tracks, top_tracks, tracks_query
 from ..scanner import scanner
 from ..security import decrypt_secret, verify_password
@@ -184,13 +184,21 @@ class Ctx:
         self.p = params
         self.request = request
         self._libs: list[int] | None = None
+        self._all_libs: list[int] | None = None
 
     def libs(self, folder: int | None = None) -> list[int]:
+        """Без выбора папки — только музыка (книги не мешаются в альбомах, поиске, случайных).
+        Если приложение явно выбрало папку (musicFolderId) — в том числе папку аудиокниг."""
         if self._libs is None:
             self._libs = allowed_library_ids(self.db, self.user)
         if folder is not None:
-            return [i for i in self._libs if i == folder]
+            return [i for i in self.all_libs() if i == folder]
         return self._libs
+
+    def all_libs(self) -> list[int]:
+        if self._all_libs is None:
+            self._all_libs = allowed_library_ids(self.db, self.user, kind="any")
+        return self._all_libs
 
     def folder(self) -> list[int]:
         return self.libs(self.p.int("musicFolderId"))
@@ -346,14 +354,14 @@ class Ctx:
     def visible_track(self, raw_id: str) -> Track:
         _, tid = _parse_id(raw_id, "tr")
         track = self.db.get(Track, tid)
-        if not track or track.library_id not in self.libs():
+        if not track or track.library_id not in self.all_libs():
             raise SubsonicError(70, "Трек не найден")
         return track
 
     def visible_album(self, raw_id: str) -> Album:
         _, aid = _parse_id(raw_id, "al")
         album = self.db.get(Album, aid)
-        if not album or album.library_id not in self.libs():
+        if not album or album.library_id not in self.all_libs():
             raise SubsonicError(70, "Альбом не найден")
         return album
 
@@ -460,7 +468,7 @@ def extensions(c: Ctx) -> dict:
 
 @method("getMusicFolders")
 def music_folders(c: Ctx) -> dict:
-    libs = c.db.scalars(select(Library).where(Library.id.in_(c.libs() or [-1])).order_by(Library.name))
+    libs = c.db.scalars(select(Library).where(Library.id.in_(c.all_libs() or [-1])).order_by(Library.name))
     return {"musicFolders": {"musicFolder": [{"id": lib.id, "name": lib.name} for lib in libs]}}
 
 
@@ -1166,9 +1174,61 @@ def get_radio(c: Ctx) -> dict:
     return {"internetRadioStations": {"internetRadioStation": []}}
 
 
+# Закладки Subsonic: приложения для аудиокниг хранят в них место, где остановились.
+# Одна закладка на трек (так в протоколе); для книг она же двигает прогресс книги.
+
+
 @method("getBookmarks")
 def get_bookmarks(c: Ctx) -> dict:
-    return {"bookmarks": {"bookmark": []}}
+    rows = list(c.db.scalars(select(Bookmark).where(Bookmark.user_id == c.user.id).order_by(desc(Bookmark.created_at))))
+    tracks = {t.id: t for t in c.db.scalars(select(Track).where(Track.id.in_([m.track_id for m in rows] or [-1])))}
+    allowed = set(c.all_libs())
+    items = []
+    for m in rows:
+        t = tracks.get(m.track_id)
+        if t is None or t.library_id not in allowed:
+            continue
+        items.append(
+            {
+                "position": int(m.position * 1000),
+                "username": c.user.username,
+                "comment": m.comment or None,
+                "created": _iso(m.created_at),
+                "changed": _iso(m.created_at),
+                "entry": c.songs([t])[0],
+            }
+        )
+    return {"bookmarks": {"bookmark": items}}
+
+
+@method("createBookmark")
+def create_bookmark(c: Ctx) -> dict:
+    track = c.visible_track(c.p.req("id"))
+    position = max(0.0, (c.p.int("position", 0, 0) or 0) / 1000)
+    comment = (c.p.get("comment") or "")[:1000]
+    m = c.db.scalar(select(Bookmark).where(Bookmark.user_id == c.user.id, Bookmark.track_id == track.id).order_by(desc(Bookmark.created_at)))
+    if m is None:
+        m = Bookmark(user_id=c.user.id, track_id=track.id)
+        c.db.add(m)
+    m.position, m.comment, m.created_at = position, comment, datetime.now(timezone.utc)
+    c.db.commit()
+    lib = c.db.get(Library, track.library_id)
+    if lib is not None and lib.kind == "audiobooks":
+        from .books import save_progress  # noqa: PLC0415
+
+        album = c.db.get(Album, track.album_id)
+        if album is not None:
+            save_progress(c.db, c.user, album, track.id, position)
+    return {}
+
+
+@method("deleteBookmark")
+def delete_bookmark(c: Ctx) -> dict:
+    track = c.visible_track(c.p.req("id"))
+    for m in c.db.scalars(select(Bookmark).where(Bookmark.user_id == c.user.id, Bookmark.track_id == track.id)):
+        c.db.delete(m)
+    c.db.commit()
+    return {}
 
 
 @method("getShares")
@@ -1212,7 +1272,7 @@ def _cover(c: Ctx) -> Response:
         kind, num = _parse_id(raw, "al")
     except SubsonicError:
         kind, num = "", 0
-    libs = c.libs()
+    libs = c.all_libs()  # обложки книг тоже
     if kind == "al":
         album = c.db.get(Album, num)
     elif kind == "tr":

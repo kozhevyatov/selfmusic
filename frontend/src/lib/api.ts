@@ -123,6 +123,7 @@ export type Home = {
 export type MyLibrary = {
   id: number;
   name: string;
+  kind: "music" | "audiobooks";
   path: string | null;
   track_count: number;
   album_count: number;
@@ -161,6 +162,7 @@ export type AdminLibrary = {
   path: string;
   enabled: boolean;
   default_access: boolean;
+  kind: "music" | "audiobooks";
   owner: { id: number; name: string } | null;
   writable: boolean;
   track_count: number;
@@ -351,6 +353,37 @@ export type AnalysisStatus = {
   analyzed: number;
   failed: number;
   forced: boolean;
+};
+
+export type BookProgress = { track_id: number | null; position: number; progress: number; speed: number; finished: boolean; updated_at: string };
+export type BookCard = {
+  id: number;
+  title: string;
+  subtitle: string;
+  author: string;
+  narrator: string;
+  series: string;
+  series_seq: number | null;
+  year: number | null;
+  cover: string | null;
+  duration: number;
+  track_count: number;
+  size: number;
+  added_at: string;
+  progress: BookProgress | null;
+};
+export type BookDetail = BookCard & {
+  description: string;
+  chapters: { index: number; track_id: number; title: string; start: number; end: number; book_start: number }[];
+  tracks: Track[];
+  bookmarks: { id: number; track_id: number; position: number; comment: string; created_at: string }[];
+};
+export type BooksHome = {
+  total: number;
+  continue: BookCard[];
+  recent: BookCard[];
+  series: { name: string; author: string; count: number; cover: string | null }[];
+  authors: { name: string; count: number; cover: string | null }[];
 };
 
 export type FolderEntry = { name: string; path: string; track_count: number; covers: string[] };
@@ -609,6 +642,20 @@ export const api = {
     removeAppPassword: () => request<{ username: string; password: null }>("/api/me/app-password", { method: "DELETE" }),
   },
 
+  books: {
+    home: () => request<BooksHome>("/api/books/home"),
+    list: (p: { q?: string; sort?: string; filter?: string; series?: string; author?: string } = {}) =>
+      request<BookCard[]>(`/api/books${qs(p)}`),
+    get: (id: number) => request<BookDetail>(`/api/books/${id}`),
+    progress: (id: number, body: { track_id: number; position: number; speed?: number; finished?: boolean }) =>
+      request<BookProgress>(`/api/books/${id}/progress`, { method: "PUT", body: json(body) }),
+    finished: (id: number, finished: boolean) =>
+      request<{ progress: BookProgress | null }>(`/api/books/${id}/finished`, { method: "POST", body: json({ finished }) }),
+    addBookmark: (id: number, body: { track_id: number; position: number; comment: string }) =>
+      request<BookDetail["bookmarks"][number]>(`/api/books/${id}/bookmarks`, { method: "POST", body: json(body) }),
+    deleteBookmark: (bookmarkId: number) => request<{ ok: true }>(`/api/bookmarks/${bookmarkId}`, { method: "DELETE" }),
+  },
+
   library: {
     home: () => request<Home>("/api/home"),
     libraries: () => request<MyLibrary[]>("/api/libraries"),
@@ -742,9 +789,9 @@ export const api = {
       request<AnalysisStatus>("/api/admin/analysis", { method: "PUT", body: json(data) }),
     runAnalysis: () => request<AnalysisStatus>("/api/admin/analysis/run", { method: "POST" }),
     stopAnalysis: () => request<AnalysisStatus>("/api/admin/analysis/stop", { method: "POST" }),
-    createLibrary: (data: { name: string; path: string; default_access: boolean }) =>
+    createLibrary: (data: { name: string; path: string; default_access: boolean; kind?: "music" | "audiobooks" }) =>
       request<AdminLibrary>("/api/admin/libraries", { method: "POST", body: json(data) }),
-    updateLibrary: (id: number, data: Partial<Pick<AdminLibrary, "name" | "path" | "enabled" | "default_access">>) =>
+    updateLibrary: (id: number, data: Partial<Pick<AdminLibrary, "name" | "path" | "enabled" | "default_access" | "kind">>) =>
       request<AdminLibrary>(`/api/admin/libraries/${id}`, { method: "PATCH", body: json(data) }),
     deleteLibrary: (id: number) => request<{ ok: true }>(`/api/admin/libraries/${id}`, { method: "DELETE" }),
     browse: (path = "") => request<FsListing>(`/api/admin/fs${qs({ path })}`),

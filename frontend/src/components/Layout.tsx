@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Ambient } from "./Ambient";
 import { Avatar, Cover } from "./Cover";
 import {
+  BookOpen,
   CircleCheck,
   Disc3,
   WifiOff,
@@ -107,6 +108,8 @@ function Sidebar() {
   const { user } = useAuth();
   const playlists = useQuery(["playlists"], api.playlists.list, { staleTime: 60_000 });
   const settings = useQuery(["settings"], api.settings.get, { staleTime: 300_000 });
+  const libs = useQuery(["libraries"], api.library.libraries, { staleTime: 300_000 });
+  const hasBooks = Boolean(libs.data?.some((l) => l.kind === "audiobooks"));
   return (
     <aside className="sticky top-0 hidden h-svh w-[260px] shrink-0 flex-col gap-7 border-r px-4 pt-7 pb-[112px] lg:flex">
       <Link to="/" className="px-2">
@@ -130,6 +133,19 @@ function Sidebar() {
             </Link>
           );
         })}
+        {hasBooks && (
+          <Link
+            to="/books"
+            aria-current={isActive(pathname, "/books") ? "page" : undefined}
+            className={cn(
+              "flex items-center gap-3.5 rounded-xl px-3 py-2.5 text-[15px] font-bold transition",
+              isActive(pathname, "/books") ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg",
+            )}
+          >
+            <BookOpen className={cn("size-5", isActive(pathname, "/books") && "text-accent-ink")} />
+            Аудиокниги
+          </Link>
+        )}
         {user && (user.is_admin || user.can_share) && (
           <Link
             to="/shares"
@@ -208,7 +224,7 @@ function MobileHeader() {
 
 function TabBar() {
   const { pathname } = useLocation();
-  const libraryPaths = ["/library", "/mixes", "/offline", "/albums", "/artists", "/favorites", "/folders", "/upload", "/shares"];
+  const libraryPaths = ["/library", "/mixes", "/offline", "/books", "/albums", "/artists", "/favorites", "/folders", "/upload", "/shares"];
   return (
     <nav
       aria-label="Разделы"

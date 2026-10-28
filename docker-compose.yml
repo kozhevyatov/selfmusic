@@ -19,6 +19,9 @@ services:
       #   MUSIC_DIR=/volume1/Музыка
       # Пока .env нет — подключается пустая папка ./music, контейнер всё равно запустится.
       - ${MUSIC_DIR:-./music}:/music/music:ro
+      # Аудиокниги (необязательно): BOOKS_DIR=/volume2/audiobooks в .env.
+      # В админке добавьте папку /music/books и выберите тип «Аудиокниги».
+      - ${BOOKS_DIR:-./books}:/music/books:ro
       # - /volume1/vinyl:/music/vinyl:ro
       # - /volume2/audiobooks:/music/audiobooks:ro
     networks:

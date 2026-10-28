@@ -265,20 +265,22 @@ function LibraryDialog({ open, onClose, lib }: { open: boolean; onClose: () => v
   const [path, setPath] = useState(lib?.path ?? "");
   const [name, setName] = useState(lib?.name ?? "");
   const [def, setDef] = useState(lib?.default_access ?? true);
+  const [kind, setKind] = useState<"music" | "audiobooks">(lib?.kind ?? "music");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (open) {
       setPath(lib?.path ?? "");
       setName(lib?.name ?? "");
       setDef(lib?.default_access ?? true);
+      setKind(lib?.kind ?? "music");
     }
   }, [open, lib]);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     try {
-      if (lib) await api.admin.updateLibrary(lib.id, { name, path, default_access: def });
-      else await api.admin.createLibrary({ name: name.trim() || path.split("/").pop() || "Музыка", path, default_access: def });
+      if (lib) await api.admin.updateLibrary(lib.id, { name, path, default_access: def, kind });
+      else await api.admin.createLibrary({ name: name.trim() || path.split("/").pop() || "Музыка", path, default_access: def, kind });
       invalidate(["admin"], ["libraries"]);
       toast.success(lib ? "Папка обновлена" : "Папка добавлена — идёт сканирование");
       onClose();
@@ -318,6 +320,25 @@ function LibraryDialog({ open, onClose, lib }: { open: boolean; onClose: () => v
         <Field id="lib-name" label="Название в приложении">
           <Input id="lib-name" required value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-bold">Что в папке</span>
+          <Segmented<"music" | "audiobooks">
+            label="Что в папке"
+            value={kind}
+            onChange={setKind}
+            className="max-w-md"
+            options={[
+              { value: "music", label: "Музыка" },
+              { value: "audiobooks", label: "Аудиокниги" },
+            ]}
+          />
+          <span className="text-[13px] text-muted">
+            {kind === "audiobooks"
+              ? "Отдельный раздел «Аудиокниги»: книга — это папка (Автор / Серия / Книга), место прослушивания запоминается. В альбомы, подборки и радио не попадает."
+              : "Альбомы, исполнители, подборки, радио."}
+            {lib && kind !== lib.kind && " Папка будет пересканирована целиком."}
+          </span>
+        </div>
         {!lib?.owner && (
           <div className="flex items-start justify-between gap-4 rounded-2xl border p-4">
             <span>
@@ -374,13 +395,17 @@ function LibrariesTab() {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[17px] font-extrabold">{l.name}</span>
+            {l.kind === "audiobooks" && <Badge className="border-accent/40 text-accent-ink">аудиокниги</Badge>}
             {!l.enabled && <Badge>выключена</Badge>}
             {l.owner && <Badge>личная · {l.owner.name}</Badge>}
             {l.writable ? <Badge className="border-success/40 text-success">чтение и запись</Badge> : <Badge>только чтение</Badge>}
           </div>
           <div className="truncate text-[13px] text-faint">{l.path}</div>
           <div className="mt-1.5 text-sm text-muted">
-            {countLabel(l.album_count, "альбом", "альбома", "альбомов")} · {countLabel(l.track_count, "трек", "трека", "треков")} ·{" "}
+            {l.kind === "audiobooks"
+              ? countLabel(l.album_count, "книга", "книги", "книг")
+              : countLabel(l.album_count, "альбом", "альбома", "альбомов")}{" "}
+            · {countLabel(l.track_count, l.kind === "audiobooks" ? "файл" : "трек", l.kind === "audiobooks" ? "файла" : "трека", l.kind === "audiobooks" ? "файлов" : "треков")} ·{" "}
             {formatDuration(l.total_duration)} · {formatSize(l.total_size)}
           </div>
           <div className="text-[13px] text-faint">

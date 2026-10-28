@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -21,7 +22,8 @@ from sqlalchemy.orm import Session
 
 from . import db as dbmod
 from .app_settings import get_setting, set_setting
-from .models import Album, Artist, Library, Play, PlaylistEntry, Star, Track, Upload
+from .models import Album, Artist, Book, Library, Play, PlaylistEntry, Star, Track, Upload
+from .books import UNKNOWN_AUTHOR, book_tags, file_chapters, natural_key, parse_book_folder, read_text_file, split_path
 from .tags import TrackMeta, read_meta
 
 log = logging.getLogger("uvicorn.error")
@@ -40,7 +42,7 @@ UNKNOWN_ARTIST = "Неизвестный исполнитель"
 BATCH = 200
 # Меняется, когда меняется само чтение тегов (например, исправление кодировки cp1251).
 # При запуске с новой версией один раз выполняется полное пересканирование.
-INDEX_VERSION = "4"  # 4: ReplayGain из тегов
+INDEX_VERSION = "4"  # 4: ReplayGain из тегов (смена типа папки на «книги» — отдельный полный скан этой папки)
 COMMIT_EVERY = 2.0  # сек: не держим запись в SQLite дольше — веб-запросы ждут
 LYRICS_MAX = 100_000
 
@@ -123,8 +125,19 @@ def album_for(db: Session, lib: Library, rel: str, meta: TrackMeta, ctx: IndexCo
     parts = folder.split("/") if folder else []
     if parts and DISC_DIR.match(parts[-1]) and len(parts) > 1:
         folder = "/".join(parts[:-1])  # Альбом/CD1 → Альбом
-    name = clean(meta.album or (os.path.basename(folder) if folder else "Без альбома")) or "Без альбома"
-    key = hashlib.sha1(f"{lib.id}|{folder.lower()}|{name.lower()}".encode("utf-8", "surrogateescape")).hexdigest()
+    if lib.kind == "audiobooks":
+        # Книга = папка (теги «альбома» у глав часто разные). Файл в корне — отдельная книга.
+        if folder:
+            name = parse_book_folder(os.path.basename(folder)).title
+            key_src = f"{lib.id}|book|{folder.lower()}"
+        else:
+            name = clean(meta.album) or os.path.splitext(os.path.basename(rel))[0]
+            key_src = f"{lib.id}|book-file|{rel.lower()}"
+        name = clean(name) or "Без названия"
+        key = hashlib.sha1(key_src.encode("utf-8", "surrogateescape")).hexdigest()
+    else:
+        name = clean(meta.album or (os.path.basename(folder) if folder else "Без альбома")) or "Без альбома"
+        key = hashlib.sha1(f"{lib.id}|{folder.lower()}|{name.lower()}".encode("utf-8", "surrogateescape")).hexdigest()
     album = ctx.albums.get(key)
     if album is None:
         album = db.scalar(select(Album).where(Album.album_key == key))
@@ -160,6 +173,10 @@ def index_file(
     album = album_for(db, lib, rel, meta, ctx)
     ctx.touched.add(album.id)
     artist_name = clean(meta.artist or meta.album_artist, 512).strip() or UNKNOWN_ARTIST
+    if lib.kind == "audiobooks":
+        # у книги «исполнитель» — автор: из структуры Автор/Серия/Книга, иначе из тегов
+        path_author = split_path(album.folder)[0] if album.folder else ""
+        artist_name = clean(path_author or meta.album_artist or meta.artist, 512).strip() or UNKNOWN_AUTHOR
     artist_id = get_or_create_artist(db, artist_name, ctx.artists)
     added = track is None
     if track is None:
@@ -582,8 +599,53 @@ def finalize_album(db: Session, album_id: int, root: Path, is_new: bool, artist_
     if is_new:
         newest = max(t.mtime for t in tracks)
         album.created_at = min(datetime.fromtimestamp(newest, timezone.utc), utcnow())
+    lib = db.get(Library, album.library_id)
+    if lib is not None and lib.kind == "audiobooks":
+        _finalize_book(db, album, tracks, root, artist_cache)
     if is_new or tuple(getattr(album, f) for f in fields) != before:
         album.updated_at = utcnow()  # от него зависит адрес обложки — меняем только при изменениях
+
+
+def book_tracks_sorted(tracks: list[Track]) -> list[Track]:
+    """Главы по порядку: диск, номер (если у всех разные), иначе «естественная» сортировка имён."""
+    nums = [t.track_no for t in tracks]
+    use_no = all(n for n in nums) and len(set(zip([t.disc_no or 1 for t in tracks], nums))) == len(tracks)
+    if use_no:
+        return sorted(tracks, key=lambda t: (t.disc_no or 1, t.track_no or 0, natural_key(t.path)))
+    return sorted(tracks, key=lambda t: natural_key(t.path))
+
+
+def _finalize_book(db: Session, album: Album, tracks: list[Track], root: Path, artist_cache: dict[str, int]) -> None:
+    """Метаданные книги: папка (Автор/Серия/Книга), desc.txt/reader.txt, теги первой главы, главы m4b."""
+    ordered = book_tracks_sorted(tracks)
+    first = ordered[0]
+    path_author, path_series, folder_name = split_path(album.folder)
+    parsed = parse_book_folder(folder_name) if folder_name else None
+    folder_path = (root / album.folder) if album.folder else (root / first.path).parent
+    tags = book_tags(root / first.path)
+    book = db.get(Book, album.id) or Book(album_id=album.id)
+    author = path_author or tags.get("author") or (album.artist_name if album.artist_name not in (VARIOUS, UNKNOWN_ARTIST) else "")
+    book.author = (clean(author, 512) or UNKNOWN_AUTHOR).strip()
+    book.series = clean(path_series or tags.get("series") or "", 512)
+    book.series_seq = parsed.seq if parsed and parsed.seq is not None else tags.get("series_seq")
+    book.narrator = clean(
+        (parsed.narrator if parsed else "") or read_text_file(folder_path, ("reader.txt", "narrator.txt"), 500) or tags.get("narrator") or "",
+        512,
+    )
+    book.subtitle = clean(tags.get("subtitle") or "", 512)
+    book.description = clean(read_text_file(folder_path, ("desc.txt", "description.txt")) or tags.get("description") or "", 20000)
+    # главы внутри одного большого файла
+    chapters = []
+    if len(ordered) == 1:
+        chapters = [{"track_id": first.id, **c} for c in file_chapters(root / first.path)]
+    book.chapters = json.dumps(chapters, ensure_ascii=False)
+    if parsed and parsed.year and not album.year:
+        album.year = parsed.year
+    album.artist_name = book.author[:512]
+    album.artist_id = get_or_create_artist(db, book.author, artist_cache)
+    if album.genre == "":
+        album.genre = "Аудиокнига"
+    db.merge(book)
 
 
 def cleanup_orphans(db: Session) -> None:

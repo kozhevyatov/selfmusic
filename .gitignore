@@ -2,6 +2,7 @@
 /data/
 /uploads/
 /music/
+/books/
 
 # python
 __pycache__/

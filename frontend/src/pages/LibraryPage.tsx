@@ -1,12 +1,16 @@
-import { ChevronRight, CircleCheck, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Sparkles, Upload } from "@/components/icons";
+import { BookOpen, ChevronRight, CircleCheck, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Sparkles, Upload } from "@/components/icons";
 import { PageHeader } from "@/components/Section";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { useQuery } from "@/lib/query";
 import { Link } from "@/lib/router";
 
 /** Медиатека на телефоне: вход в разделы, которые на компьютере лежат в боковом меню. */
 export default function LibraryPage() {
   const { user } = useAuth();
+  const libs = useQuery(["libraries"], api.library.libraries, { staleTime: 300_000 });
   const items = [
+    ...(libs.data?.some((l) => l.kind === "audiobooks") ? [{ to: "/books", label: "Аудиокниги", icon: BookOpen }] : []),
     { to: "/mixes", label: "Подборки", icon: Sparkles },
     { to: "/albums", label: "Альбомы", icon: Disc3 },
     { to: "/artists", label: "Исполнители", icon: MicVocal },

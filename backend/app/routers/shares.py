@@ -53,7 +53,7 @@ def _owner_libs(db: Session, share: Share) -> list[int]:
     owner = share.owner
     if not owner or not owner.is_active:
         return []
-    return allowed_library_ids(db, owner)
+    return allowed_library_ids(db, owner, kind="any")
 
 
 def _like_prefix(folder: str) -> str:
@@ -210,7 +210,7 @@ def _share_out(db: Session, request: Request, share: Share, with_count: bool = T
 
 
 def _validate_target(db: Session, user: User, data: ShareCreate) -> dict:
-    libs = allowed_library_ids(db, user)
+    libs = allowed_library_ids(db, user, kind="any")
     target: dict = {"kind": data.kind}
     if data.kind == "folder":
         lib = db.get(Library, data.library_id or 0)
@@ -331,7 +331,7 @@ def library_dirs(
 ) -> dict:
     """Подпапки доступной пользователю папки — чтобы поделиться подпапкой."""
     lib = db.get(Library, library_id)
-    if not lib or lib.id not in allowed_library_ids(db, user):
+    if not lib or lib.id not in allowed_library_ids(db, user, kind="any"):
         raise HTTPException(404, "Папка не найдена")
     root = Path(lib.path).resolve()
     target = (root / path.strip("/")).resolve() if path.strip("/") else root

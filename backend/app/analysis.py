@@ -238,7 +238,10 @@ class Analyzer:
 
     def status(self) -> dict:
         with dbmod.session_scope() as db:
-            total = db.scalar(select(_count()).select_from(Track).join(Library, Library.id == Track.library_id).where(Library.enabled.is_(True))) or 0
+            total = db.scalar(
+                select(_count()).select_from(Track).join(Library, Library.id == Track.library_id)
+                .where(Library.enabled.is_(True), Library.kind == "music")
+            ) or 0
             done = db.scalar(
                 select(_count()).select_from(TrackFeature).join(Track, Track.id == TrackFeature.track_id)
                 .where(TrackFeature.version == ANALYSIS_VERSION, TrackFeature.error.is_(None))
@@ -296,6 +299,7 @@ class Analyzer:
                 .outerjoin(TrackFeature, TrackFeature.track_id == Track.id)
                 .where(
                     Library.enabled.is_(True),
+                    Library.kind == "music",  # аудиокниги для подборок не анализируем
                     or_(
                         TrackFeature.track_id.is_(None),
                         TrackFeature.version < ANALYSIS_VERSION,

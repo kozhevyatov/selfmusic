@@ -21,6 +21,12 @@ export type Repeat = "off" | "all" | "one";
 
 export type RadioSeed = { track_id?: number; artist_id?: number; label: string };
 
+export type BookChapter = { index: number; track_id: number; title: string; start: number; end: number; book_start: number };
+/** Режим аудиокниги: главы, скорость, место сохраняется на сервере */
+export type BookMode = { id: number; title: string; author: string; cover: string | null; chapters: BookChapter[]; duration: number };
+/** Таймер сна: до времени (мс) или до конца главы/трека */
+export type SleepTimer = { until: number | null; endOfChapter: boolean } | null;
+
 export type PlayerState = {
   queue: Track[];
   index: number;
@@ -36,6 +42,9 @@ export type PlayerState = {
   order: number[] | null;
   /** Включено «Радио»: очередь сама продолжается похожими треками */
   radio: RadioSeed | null;
+  book: BookMode | null;
+  speed: number;
+  sleep: SleepTimer;
 };
 
 const STORAGE = "sm-player";
@@ -91,6 +100,9 @@ class Player {
       repeat: saved.repeat ?? "off",
       order: saved.order ?? null,
       radio: saved.radio ?? null,
+      book: saved.book ?? null,
+      speed: saved.book ? (saved.speed ?? 1) : 1,
+      sleep: null,
     };
     this.decks.forEach((d, i) => this.bind(d, i));
     this.bindMediaSession();
@@ -141,7 +153,7 @@ class Player {
   private persist() {
     window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => {
-      const { queue, index, time, volume, shuffle, repeat, order, radio } = this.state;
+      const { queue, index, time, volume, shuffle, repeat, order, radio, book, speed } = this.state;
       try {
         // Очередь может быть длинной — храним не больше 1000 треков вокруг текущего
         const start = Math.max(0, index - 200);
@@ -156,6 +168,8 @@ class Player {
             shuffle,
             repeat,
             radio,
+            book,
+            speed,
             order: order?.slice(start, start + 1000) ?? null,
           }),
         );
@@ -270,6 +284,8 @@ class Player {
       lastTick = now;
       this.set({ time: a.currentTime });
       this.maybeScrobble();
+      this.checkSleep();
+      this.maybeSyncBook();
       if ("mediaSession" in navigator && navigator.mediaSession.setPositionState && this.state.duration) {
         try {
           navigator.mediaSession.setPositionState({
@@ -301,8 +317,9 @@ class Player {
     ms.setActionHandler("nexttrack", () => this.next());
     try {
       ms.setActionHandler("seekto", (d) => d.seekTime !== undefined && this.seek(d.seekTime));
-      ms.setActionHandler("seekbackward", (d) => this.seek(this.audio.currentTime - (d.seekOffset ?? 10)));
-      ms.setActionHandler("seekforward", (d) => this.seek(this.audio.currentTime + (d.seekOffset ?? 10)));
+      // в книге — привычные −15 / +30 секунд
+      ms.setActionHandler("seekbackward", (d) => this.skip(-(d.seekOffset ?? (this.state.book ? 15 : 10))));
+      ms.setActionHandler("seekforward", (d) => this.skip(d.seekOffset ?? (this.state.book ? 30 : 10)));
     } catch {
       /* не поддерживается */
     }
@@ -321,7 +338,7 @@ class Player {
   /** Сколько секунд смешивать текущий и следующий (0 — без кроссфейда) */
   private crossfadeFor(cur: Track, nxt: Track): number {
     const s = getAudioSettings();
-    if (s.crossfade <= 0) return 0;
+    if (s.crossfade <= 0 || this.state.book) return 0; // книги не смешиваем
     if (s.crossfadeSkipAlbum && cur.album_id === nxt.album_id) {
       const sameDisc = (cur.disc_no ?? 1) === (nxt.disc_no ?? 1);
       if (sameDisc && (nxt.track_no ?? 0) === (cur.track_no ?? 0) + 1) return 0; // альбом по порядку — не смешиваем
@@ -375,6 +392,7 @@ class Player {
     this.wantPlay = true;
     this.fade[to] = secs > 0 ? 0 : 1;
     this.applyVolume(to);
+    this.applyRate();
     toEl.play().catch(() => this.set({ playing: false, loading: false }, false));
     if (secs > 0) {
       this.rampFade(to, 1, secs);
@@ -400,7 +418,7 @@ class Player {
 
   private maybeScrobble() {
     const cur = this.current();
-    if (!cur) return;
+    if (!cur || this.state.book) return;
     const key = `${this.playStartedFor}`;
     if (!key || this.scrobbled.has(key)) return;
     const d = this.state.duration || cur.duration;
@@ -411,6 +429,11 @@ class Player {
   }
 
   private onEnded() {
+    if (this.state.sleep?.endOfChapter) {
+      this.sleepNow();
+      this.set({ playing: false });
+      return;
+    }
     if (this.state.repeat === "one") {
       this.audio.currentTime = 0;
       this.startTracking();
@@ -449,6 +472,7 @@ class Player {
     }
     this.fade[this.active] = 1;
     this.applyVolume(this.active);
+    this.applyRate();
     this.set({ index, time: 0, duration: track.duration, loading: autoplay });
     this.startTracking();
     this.updateMediaSession();
@@ -472,6 +496,172 @@ class Player {
     document.title = `${t.title} · ${t.artist}`;
   }
 
+  // ---------- аудиокниги ----------
+
+  private pausedAt = 0;
+  private lastBookSync = 0;
+
+  private applyRate() {
+    for (const d of this.decks) {
+      d.playbackRate = this.state.speed;
+      try {
+        d.preservesPitch = true; // голос не становится «мультяшным»
+      } catch {
+        /* старые браузеры */
+      }
+    }
+  }
+
+  /** Включить книгу с сохранённого места (или с главы chapterIndex) */
+  playBook(book: BookMode, tracks: Track[], opts: { trackId?: number; position?: number; speed?: number } = {}) {
+    if (!tracks.length) return;
+    this.engage();
+    this.syncBook(true);
+    const index = Math.max(0, opts.trackId ? tracks.findIndex((t) => t.id === opts.trackId) : 0);
+    this.stopDeck(1 - this.active);
+    this.set({ queue: tracks, order: null, shuffle: false, radio: null, book, speed: opts.speed ?? 1, repeat: "off" });
+    this.deckIndex[this.active] = null;
+    this.load(index, true);
+    const at = opts.position ?? 0;
+    if (at > 1) this.audio.addEventListener("loadedmetadata", () => this.seek(Math.max(0, at - 2)), { once: true });
+  }
+
+  setSpeed(speed: number) {
+    this.set({ speed: Math.max(0.5, Math.min(3, Math.round(speed * 100) / 100)) });
+    this.applyRate();
+    this.syncBook(true);
+  }
+
+  /** Перемотка на секунды (−15 / +30). В книге из многих файлов — с переходом между главами. */
+  skip(seconds: number) {
+    const a = this.audio;
+    const target = a.currentTime + seconds;
+    const d = this.state.duration || a.duration || 0;
+    if (target < 0 && this.state.index > 0 && this.state.book) {
+      const prev = this.state.queue[this.state.index - 1];
+      this.load(this.state.index - 1, !a.paused);
+      this.audio.addEventListener("loadedmetadata", () => this.seek(Math.max(0, (prev.duration || 0) + target)), { once: true });
+      return;
+    }
+    if (d && target > d - 0.5 && this.state.index < this.state.queue.length - 1) {
+      this.load(this.state.index + 1, !a.paused);
+      return;
+    }
+    this.seek(Math.max(0, target));
+  }
+
+  /** Номер текущей главы (с учётом глав внутри одного файла) */
+  chapterIndex(): number {
+    const { book, index, time } = this.state;
+    const cur = this.current();
+    if (!book || !cur) return -1;
+    let found = -1;
+    book.chapters.forEach((c, i) => {
+      if (c.track_id === cur.id && c.start <= time + 0.5) found = i;
+    });
+    return found >= 0 ? found : index;
+  }
+
+  jumpToChapter(i: number) {
+    const ch = this.state.book?.chapters[i];
+    if (!ch) return;
+    this.engage();
+    const ti = this.state.queue.findIndex((t) => t.id === ch.track_id);
+    if (ti < 0) return;
+    if (ti === this.state.index) {
+      this.seek(ch.start);
+      if (this.audio.paused) this.resume();
+    } else {
+      this.load(ti, true);
+      if (ch.start > 0) this.audio.addEventListener("loadedmetadata", () => this.seek(ch.start), { once: true });
+    }
+  }
+
+  /** Предыдущая глава (или начало текущей, если прошло больше 4 секунд) */
+  prevChapter() {
+    const i = this.chapterIndex();
+    const ch = this.state.book?.chapters[i];
+    if (ch && this.audio.currentTime - ch.start > 4) return this.seek(ch.start);
+    if (i > 0) this.jumpToChapter(i - 1);
+    else this.seek(0);
+  }
+
+  nextChapter() {
+    const i = this.chapterIndex();
+    if (this.state.book && i < this.state.book.chapters.length - 1) this.jumpToChapter(i + 1);
+  }
+
+  /** Как в BookPlayer: после паузы чуть отматываем назад, чтобы вспомнить, на чём остановились */
+  private autoRewind() {
+    if (!this.state.book || !this.pausedAt) return;
+    const paused = (Date.now() - this.pausedAt) / 1000;
+    this.pausedAt = 0;
+    const back = paused < 10 ? 0 : paused < 60 ? 3 : paused < 600 ? 10 : paused < 3600 ? 20 : 30;
+    if (back) this.seek(Math.max(0, this.audio.currentTime - back));
+  }
+
+  private maybeSyncBook() {
+    if (this.state.book && Date.now() - this.lastBookSync > 15000) this.syncBook(false);
+  }
+
+  /** Сохранить место в книге на сервере (и локально — если нет связи, отправим позже) */
+  private syncBook(force: boolean) {
+    const { book } = this.state;
+    const cur = this.current();
+    if (!book || !cur) return;
+    if (!force && Date.now() - this.lastBookSync < 15000) return;
+    this.lastBookSync = Date.now();
+    const body = { track_id: cur.id, position: this.audio.currentTime || this.state.time, speed: this.state.speed };
+    try {
+      localStorage.setItem(`sm-book-${book.id}`, JSON.stringify({ ...body, at: Date.now() }));
+    } catch {
+      /* приватный режим */
+    }
+    api.books.progress(book.id, body).catch(() => {});
+  }
+
+  // ---------- таймер сна ----------
+
+  /** minutes — через сколько остановить; "chapter" — в конце главы/трека; null — выключить */
+  setSleep(value: number | "chapter" | null) {
+    if (value === null) return this.set({ sleep: null });
+    if (value === "chapter") return this.set({ sleep: { until: null, endOfChapter: true } });
+    this.set({ sleep: { until: Date.now() + value * 60_000, endOfChapter: false } });
+  }
+
+  private sleepChapter = -2;
+
+  private checkSleep() {
+    const { sleep } = this.state;
+    if (!sleep) return;
+    const a = this.audio;
+    if (sleep.until) {
+      const left = (sleep.until - Date.now()) / 1000;
+      // последние 10 секунд — плавно тише
+      if (left <= 10 && left > 0) {
+        this.fade[this.active] = Math.max(0, left / 10);
+        this.applyVolume(this.active);
+      }
+      if (left <= 0) this.sleepNow();
+      return;
+    }
+    if (sleep.endOfChapter) {
+      const ci = this.chapterIndex();
+      if (this.sleepChapter === -2) this.sleepChapter = ci;
+      const ch = this.state.book?.chapters[ci];
+      const end = ch && ch.end > ch.start && this.state.book && this.state.book.chapters.filter((c) => c.track_id === ch.track_id).length > 1 ? ch.end : a.duration;
+      if (ci !== this.sleepChapter || (isFinite(end) && a.currentTime >= end - 0.4)) this.sleepNow();
+    }
+  }
+
+  private sleepNow() {
+    this.sleepChapter = -2;
+    this.set({ sleep: null });
+    this.pause();
+    this.fade[this.active] = 1;
+    this.applyVolume(this.active);
+  }
+
   // ---------- радио ----------
 
   /** Включить «Радио»: похожие на трек (он играет первым) или на исполнителя. */
@@ -484,10 +674,13 @@ class Player {
     });
     const queue = seed.track ? [seed.track, ...res.tracks] : res.tracks;
     if (!queue.length) throw new Error("Не нашлось похожих треков");
+    this.syncBook(true);
     this.set({
       queue,
       order: null,
       shuffle: false,
+      book: null,
+      speed: 1,
       radio: { track_id: seed.track?.id, artist_id: seed.artist_id, label: seed.label },
     });
     this.load(0, true);
@@ -539,7 +732,8 @@ class Player {
     }
     // новая очередь — позиции на деках больше не совпадают
     this.stopDeck(1 - this.active);
-    this.set({ queue, order, shuffle, radio: null });
+    this.syncBook(true);
+    this.set({ queue, order, shuffle, radio: null, book: null, speed: 1 });
     this.deckIndex[this.active] = null;
     this.load(index, true);
   }
@@ -580,6 +774,7 @@ class Player {
       if (at > 0) this.audio.addEventListener("loadedmetadata", () => this.seek(at), { once: true });
     } else {
       if (!this.playStartedFor) this.startTracking();
+      this.autoRewind();
       this.wantPlay = true;
       this.audio.play().catch(() => {});
     }
@@ -589,6 +784,8 @@ class Player {
     this.wantPlay = false;
     this.cancelTransition();
     this.audio.pause();
+    this.pausedAt = Date.now();
+    this.syncBook(true);
   }
 
   next(auto = false) {
@@ -709,7 +906,7 @@ class Player {
     this.stopDeck(0);
     this.stopDeck(1);
     this.active = 0;
-    this.set({ queue: [], index: 0, playing: false, time: 0, duration: 0, order: null, radio: null });
+    this.set({ queue: [], index: 0, playing: false, time: 0, duration: 0, order: null, radio: null, book: null, speed: 1, sleep: null });
     document.title = "SelfMusic";
   }
 }

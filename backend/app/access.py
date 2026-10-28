@@ -18,12 +18,17 @@ from .config import UPLOAD_ROOT
 from .models import Library, LibraryAccess, Upload, User
 
 
-def allowed_library_ids(db: Session, user: User, only: int | None = None) -> list[int]:
+def allowed_library_ids(db: Session, user: User, only: int | None = None, kind: str = "music") -> list[int]:
+    """Доступные пользователю папки. kind: music — музыка (по умолчанию: альбомы, поиск, подборки…),
+    audiobooks — аудиокниги, any — все (поток, обложки, теги, ссылки)."""
     access = select(LibraryAccess.library_id).where(LibraryAccess.user_id == user.id)
     cond = or_(Library.owner_id == user.id, Library.id.in_(access))
     if user.is_admin:
         cond = or_(cond, Library.owner_id.is_(None))
-    ids = list(db.scalars(select(Library.id).where(Library.enabled.is_(True), cond)))
+    query = select(Library.id).where(Library.enabled.is_(True), cond)
+    if kind != "any":
+        query = query.where(Library.kind == kind)
+    ids = list(db.scalars(query))
     if only is not None:
         return [i for i in ids if i == only]
     return ids

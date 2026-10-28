@@ -156,6 +156,7 @@ class LibraryCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     path: str = Field(min_length=1, max_length=1024)
     default_access: bool = True
+    kind: Literal["music", "audiobooks"] = "music"
 
 
 class LibraryUpdate(BaseModel):
@@ -163,6 +164,7 @@ class LibraryUpdate(BaseModel):
     path: str | None = Field(default=None, min_length=1, max_length=1024)
     enabled: bool | None = None
     default_access: bool | None = None
+    kind: Literal["music", "audiobooks"] | None = None
 
 
 class ScanRequest(BaseModel):

@@ -31,6 +31,7 @@ const KIND: Record<OfflineCollection["kind"], string> = {
   mix: "Подборка",
   folder: "Папка",
   tracks: "Треки",
+  book: "Аудиокнига",
 };
 
 function Row({ c }: { c: OfflineCollection }) {

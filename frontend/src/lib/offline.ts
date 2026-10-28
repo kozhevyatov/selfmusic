@@ -15,7 +15,7 @@ const INDEX_URL = "/__offline/index.json";
 const COVER_SIZES = [96, 128, 400, 512, 600, 900];
 
 export type OfflineQuality = "original" | "320" | "192" | "128";
-export type CollectionKind = "album" | "playlist" | "mix" | "folder" | "tracks";
+export type CollectionKind = "album" | "playlist" | "mix" | "folder" | "tracks" | "book";
 
 export type OfflineCollection = {
   key: string; // album-12, playlist-3, mix-night

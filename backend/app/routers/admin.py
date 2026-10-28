@@ -201,6 +201,7 @@ def _library_out(db: Session, lib: Library) -> dict:
         "path": lib.path,
         "enabled": lib.enabled,
         "default_access": lib.default_access,
+        "kind": lib.kind,
         "track_count": lib.track_count,
         "album_count": lib.album_count,
         "total_size": lib.total_size,
@@ -235,7 +236,7 @@ def list_libraries(db: Session = Depends(get_db), _: User = Depends(require_admi
 
 @router.post("/admin/libraries")
 def create_library(data: LibraryCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)) -> dict:
-    lib = Library(name=data.name.strip(), path=_check_path(db, data.path), default_access=data.default_access)
+    lib = Library(name=data.name.strip(), path=_check_path(db, data.path), default_access=data.default_access, kind=data.kind)
     db.add(lib)
     db.flush()
     if data.default_access:
@@ -265,6 +266,9 @@ def update_library(
         lib.enabled = data.enabled
     if data.default_access is not None:
         lib.default_access = data.default_access
+    if data.kind is not None and data.kind != lib.kind:
+        lib.kind = data.kind
+        rescan = True  # треки пересобираются в книги (или обратно в альбомы)
     db.commit()
     if rescan:
         scanner.start(library_id=lib.id, full=True)

@@ -88,6 +88,8 @@ class Library(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # Открывать ли папку новым пользователям автоматически
     default_access: Mapped[bool] = mapped_column(Boolean, default=True)
+    # music — музыка; audiobooks — аудиокниги (отдельный раздел, не попадают в альбомы, подборки, радио)
+    kind: Mapped[str] = mapped_column(String(16), default="music")
     # Личная папка пользователя (для загрузок). У общих папок — NULL.
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     track_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -351,4 +353,52 @@ class MixFeedback(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     key: Mapped[str] = mapped_column(String(32), primary_key=True)
     track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# ---------------- аудиокниги ----------------
+
+
+class Book(Base):
+    """Книга = альбом из папки аудиокниг (album_id) + то, чего нет у альбома."""
+
+    __tablename__ = "books"
+
+    album_id: Mapped[int] = mapped_column(ForeignKey("albums.id", ondelete="CASCADE"), primary_key=True)
+    author: Mapped[str] = mapped_column(String(512), default="")
+    narrator: Mapped[str] = mapped_column(String(512), default="")
+    series: Mapped[str] = mapped_column(String(512), default="", index=True)
+    series_seq: Mapped[float | None] = mapped_column(Float, nullable=True)
+    subtitle: Mapped[str] = mapped_column(String(512), default="")
+    description: Mapped[str] = mapped_column(LongText, default="")
+    # Главы внутри одного файла (m4b и т.п.): [{"track_id", "title", "start", "end"}]
+    chapters: Mapped[str] = mapped_column(LongText, default="[]")
+
+
+class BookProgress(Base):
+    """Где пользователь остановился в книге (синхронизируется между устройствами)."""
+
+    __tablename__ = "book_progress"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    album_id: Mapped[int] = mapped_column(ForeignKey("albums.id", ondelete="CASCADE"), primary_key=True)
+    track_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    position: Mapped[float] = mapped_column(Float, default=0)  # секунд от начала файла track_id
+    progress: Mapped[float] = mapped_column(Float, default=0)  # доля книги 0..1
+    speed: Mapped[float] = mapped_column(Float, default=1.0)
+    finished: Mapped[bool] = mapped_column(Boolean, default=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class Bookmark(Base):
+    """Закладка (с заметкой) — и для книг, и для Subsonic createBookmark."""
+
+    __tablename__ = "bookmarks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
+    position: Mapped[float] = mapped_column(Float, default=0)
+    comment: Mapped[str] = mapped_column(String(1000), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
