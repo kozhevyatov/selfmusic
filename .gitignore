@@ -1,6 +1,7 @@
 # данные контейнера
 /data/
 /uploads/
+/music/
 
 # python
 __pycache__/
