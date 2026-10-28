@@ -1,0 +1,576 @@
+"""Веб-API медиатеки: главная, альбомы, исполнители, поиск, избранное, плейлисты, поток и обложки."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
+from sqlalchemy import delete, desc, func, select
+from sqlalchemy.orm import Session
+
+from ..access import allowed_library_ids, can_edit_track, can_write
+from ..db import get_db
+from ..media import cover_path, download_name, file_response, image_response, content_type, stream_track, track_file
+from ..models import Album, Artist, Library, Play, Playlist, PlaylistEntry, Star, Track, Upload, User
+from ..queries import (
+    album_list_query,
+    album_tracks,
+    artists_with_counts,
+    genres,
+    search_tracks,
+    top_tracks,
+    tracks_query,
+)
+from ..schemas import PlayIn, PlaylistCreate, PlaylistReorder, PlaylistTracks, PlaylistUpdate
+from ..security import get_current_user, get_media_user
+from ..serialize import album_out, albums_out, artist_out, cover_url, starred_ids, track_out, tracks_out
+
+router = APIRouter(prefix="/api", tags=["library"])
+
+QUALITY_BITRATE = {"original": 0, "320": 320, "192": 192, "128": 128}
+
+
+def _libs(db: Session, user: User, library: int | None = None) -> list[int]:
+    return allowed_library_ids(db, user, library)
+
+
+def _visible_album(db: Session, user: User, album_id: int) -> Album:
+    album = db.get(Album, album_id)
+    if not album or album.library_id not in _libs(db, user):
+        raise HTTPException(404, "Альбом не найден")
+    return album
+
+
+def _visible_track(db: Session, user: User, track_id: int) -> Track:
+    track = db.get(Track, track_id)
+    if not track or track.library_id not in _libs(db, user):
+        raise HTTPException(404, "Трек не найден")
+    return track
+
+
+def _artist_cards(db: Session, user: User, rows: list[tuple]) -> list[dict]:
+    if not rows:
+        return []
+    cover_albums = {a.id: a for a in db.scalars(select(Album).where(Album.id.in_([r[2] for r in rows if r[2]])))}
+    starred = starred_ids(db, user.id, "artist", (r[0].id for r in rows))
+    return [
+        artist_out(artist, count, cover_url(cover_albums.get(cover_id)), artist.id in starred)
+        for artist, count, cover_id in rows
+    ]
+
+
+# ---------------- главная ----------------
+
+
+@router.get("/libraries")
+def my_libraries(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
+    ids = _libs(db, user)
+    libs = db.scalars(select(Library).where(Library.id.in_(ids or [-1])).order_by(Library.name))
+    return [
+        {
+            "id": lib.id,
+            "name": lib.name,
+            "path": lib.path if user.is_admin else None,
+            "track_count": lib.track_count,
+            "album_count": lib.album_count,
+            "total_duration": lib.total_duration,
+            "total_size": lib.total_size,
+            "last_scan_at": lib.last_scan_at,
+        }
+        for lib in libs
+    ]
+
+
+@router.get("/home")
+def home(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    ids = _libs(db, user)
+    recent = list(db.scalars(album_list_query(ids, user.id, "newest").limit(18)))
+    played = list(db.scalars(album_list_query(ids, user.id, "recent").limit(12)))
+    random_albums = list(db.scalars(album_list_query(ids, user.id, "random").limit(12)))
+
+    since = datetime.now(timezone.utc) - timedelta(days=180)
+    plays = (
+        select(Album.artist_id, func.count(Play.id).label("cnt"))
+        .join(Album, Album.id == Play.album_id)
+        .where(Play.user_id == user.id, Play.played_at >= since, Album.library_id.in_(ids or [-1]))
+        .group_by(Album.artist_id)
+        .order_by(desc("cnt"))
+        .limit(12)
+    )
+    top_ids = [r[0] for r in db.execute(plays) if r[0]]
+    rows = artists_with_counts(db, ids, only_ids=top_ids) if top_ids else []
+    rows.sort(key=lambda r: top_ids.index(r[0].id))
+    frequent = _artist_cards(db, user, rows)
+    if len(frequent) < 6:
+        # Мало истории — добираем случайными исполнителями
+        extra = artists_with_counts(db, ids)
+        import random
+
+        random.shuffle(extra)
+        have = {a["id"] for a in frequent}
+        frequent += _artist_cards(db, user, [r for r in extra if r[0].id not in have][: 12 - len(frequent)])
+
+    stats = db.execute(
+        select(func.count(Track.id), func.coalesce(func.sum(Track.duration), 0)).where(Track.library_id.in_(ids or [-1]))
+    ).one()
+    return {
+        "recent_albums": albums_out(db, user.id, recent),
+        "recently_played": albums_out(db, user.id, played),
+        "random_albums": albums_out(db, user.id, random_albums),
+        "frequent_artists": frequent,
+        "stats": {
+            "tracks": stats[0],
+            "albums": db.scalar(select(func.count(Album.id)).where(Album.library_id.in_(ids or [-1]))) or 0,
+            "artists": len(artists_with_counts(db, ids)) if ids else 0,
+            "duration": int(stats[1]),
+        },
+    }
+
+
+# ---------------- альбомы ----------------
+
+AlbumSort = Literal["newest", "name", "artist", "year", "random", "frequent", "recent", "starred"]
+
+
+@router.get("/albums")
+def list_albums(
+    sort: AlbumSort = "newest",
+    library: int | None = None,
+    genre: str | None = None,
+    q: str = "",
+    offset: int = Query(0, ge=0),
+    limit: int = Query(60, ge=1, le=500),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    ids = _libs(db, user, library)
+    query = album_list_query(ids, user.id, sort, genre=genre, q=q.strip())
+    total = db.scalar(select(func.count()).select_from(query.order_by(None).subquery())) or 0
+    items = list(db.scalars(query.offset(offset).limit(limit)))
+    return {"items": albums_out(db, user.id, items), "total": total}
+
+
+@router.get("/albums/{album_id}")
+def get_album(album_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    album = _visible_album(db, user, album_id)
+    tracks = album_tracks(db, album.id)
+    ids = _libs(db, user)
+    more = []
+    if album.artist_id:
+        more = list(
+            db.scalars(
+                album_list_query(ids, user.id, "year", artist_id=album.artist_id).where(Album.id != album.id).limit(12)
+            )
+        )
+    data = album_out(album, starred_ids(db, user.id, "album", [album.id]))
+    lib = db.get(Library, album.library_id)
+    data["tracks"] = tracks_out(db, user.id, tracks)
+    # Удалять можно свои загрузки; администратор — всё в папке, доступной на запись
+    if user.is_admin and can_write(db, user, lib):
+        deletable = {t.id for t in tracks}
+    else:
+        mine = set(
+            db.scalars(
+                select(Upload.path_hash).where(
+                    Upload.user_id == user.id,
+                    Upload.library_id == lib.id,
+                    Upload.path_hash.in_([t.path_hash for t in tracks] or ["-"]),
+                )
+            )
+        )
+        deletable = {t.id for t in tracks if t.path_hash in mine}
+    for item in data["tracks"]:
+        item["can_delete"] = item["id"] in deletable
+    data["can_edit"] = bool(tracks) and can_edit_track(db, user, lib, tracks[0].path)
+    data["more_by_artist"] = albums_out(db, user.id, more)
+    data["library_name"] = lib.name if lib else ""
+    return data
+
+
+# ---------------- исполнители ----------------
+
+
+@router.get("/artists")
+def list_artists(
+    q: str = "",
+    library: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    return _artist_cards(db, user, artists_with_counts(db, _libs(db, user, library), q.strip()))
+
+
+@router.get("/artists/{artist_id}")
+def get_artist(artist_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    artist = db.get(Artist, artist_id)
+    if not artist:
+        raise HTTPException(404, "Исполнитель не найден")
+    ids = _libs(db, user)
+    albums = list(db.scalars(album_list_query(ids, user.id, "year", artist_id=artist.id)))
+    top = top_tracks(db, ids, artist.id, 10)
+    if not albums and not top:
+        raise HTTPException(404, "Исполнитель не найден")
+    # Альбомы других исполнителей, где он участвует (сборники, фиты)
+    appears = list(
+        db.scalars(
+            select(Album)
+            .where(
+                Album.library_id.in_(ids or [-1]),
+                Album.artist_id != artist.id,
+                Album.id.in_(select(Track.album_id).where(Track.artist_id == artist.id)),
+            )
+            .order_by(desc(Album.year))
+            .limit(24)
+        )
+    )
+    cover_album = next((a for a in albums if a.cover), None) or next((a for a in appears if a.cover), None)
+    return {
+        **artist_out(artist, len(albums), cover_url(cover_album), bool(starred_ids(db, user.id, "artist", [artist.id]))),
+        "albums": albums_out(db, user.id, albums),
+        "appears_on": albums_out(db, user.id, appears),
+        "top_tracks": tracks_out(db, user.id, top),
+        "track_count": db.scalar(
+            select(func.count(Track.id)).where(Track.library_id.in_(ids or [-1]), Track.album_id.in_([a.id for a in albums] or [-1]))
+        )
+        or 0,
+    }
+
+
+@router.get("/artists/{artist_id}/tracks")
+def artist_tracks(artist_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
+    """Все треки исполнителя по альбомам — для «Слушать всё» и «Перемешать»."""
+    ids = _libs(db, user)
+    tracks = list(
+        db.scalars(
+            tracks_query(ids)
+            .join(Album, Album.id == Track.album_id)
+            .where(Album.artist_id == artist_id)
+            .order_by(desc(Album.year), Album.id, func.coalesce(Track.disc_no, 1), Track.track_no)
+            .limit(2000)
+        )
+    )
+    return tracks_out(db, user.id, tracks)
+
+
+# ---------------- поиск, жанры, случайное ----------------
+
+
+@router.get("/search")
+def search(q: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    q = q.strip()
+    if not q:
+        return {"artists": [], "albums": [], "tracks": []}
+    ids = _libs(db, user)
+    artists = _artist_cards(db, user, artists_with_counts(db, ids, q)[:12])
+    albums = list(db.scalars(album_list_query(ids, user.id, "name", q=q).limit(24)))
+    tracks = search_tracks(db, ids, q, 50)
+    return {"artists": artists, "albums": albums_out(db, user.id, albums), "tracks": tracks_out(db, user.id, tracks)}
+
+
+@router.get("/genres")
+def list_genres(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
+    return [{"name": g, "track_count": t, "album_count": a} for g, t, a in genres(db, _libs(db, user))]
+
+
+@router.get("/tracks/random")
+def random_tracks(
+    limit: int = Query(50, ge=1, le=500),
+    genre: str | None = None,
+    library: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    query = tracks_query(_libs(db, user, library))
+    if genre:
+        query = query.where(Track.genre == genre)
+    return tracks_out(db, user.id, list(db.scalars(query.order_by(func.random()).limit(limit))))
+
+
+@router.get("/tracks/{track_id}")
+def get_track(track_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    track = _visible_track(db, user, track_id)
+    data = track_out(track, starred_ids(db, user.id, "track", [track.id]))
+    data["lyrics"] = track.lyrics
+    data["path"] = track.path if user.is_admin else None
+    return data
+
+
+@router.get("/tracks/{track_id}/lyrics")
+def track_lyrics(track_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    track = _visible_track(db, user, track_id)
+    return {"lyrics": track.lyrics}
+
+
+# ---------------- история ----------------
+
+
+@router.post("/plays")
+def record_play(data: PlayIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    track = _visible_track(db, user, data.track_id)
+    db.add(Play(user_id=user.id, track_id=track.id, album_id=track.album_id))
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/history")
+def history(
+    limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[dict]:
+    ids = _libs(db, user)
+    rows = db.execute(
+        select(Play.played_at, Track)
+        .join(Track, Track.id == Play.track_id)
+        .where(Play.user_id == user.id, Track.library_id.in_(ids or [-1]))
+        .order_by(desc(Play.played_at))
+        .limit(limit)
+    ).all()
+    starred = starred_ids(db, user.id, "track", (t.id for _, t in rows))
+    return [{**track_out(t, starred), "played_at": at} for at, t in rows]
+
+
+# ---------------- избранное ----------------
+
+Kind = Literal["track", "album", "artist"]
+
+
+@router.get("/favorites")
+def favorites(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    ids = _libs(db, user)
+    tracks = list(
+        db.scalars(
+            tracks_query(ids)
+            .join(Star, (Star.item_id == Track.id) & (Star.kind == "track") & (Star.user_id == user.id))
+            .order_by(desc(Star.created_at))
+        )
+    )
+    albums = list(db.scalars(album_list_query(ids, user.id, "starred")))
+    artist_ids = list(
+        db.scalars(select(Star.item_id).where(Star.user_id == user.id, Star.kind == "artist").order_by(desc(Star.created_at)))
+    )
+    rows = artists_with_counts(db, ids, only_ids=artist_ids)
+    rows.sort(key=lambda r: artist_ids.index(r[0].id))
+    return {
+        "tracks": [track_out(t, {t.id for t in tracks}) for t in tracks],
+        "albums": [album_out(a, {a.id for a in albums}) for a in albums],
+        "artists": _artist_cards(db, user, rows),
+    }
+
+
+@router.put("/favorites/{kind}/{item_id}")
+def add_favorite(kind: Kind, item_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    model = {"track": Track, "album": Album, "artist": Artist}[kind]
+    if not db.get(model, item_id):
+        raise HTTPException(404, "Не найдено")
+    if not db.get(Star, (user.id, kind, item_id)):
+        db.add(Star(user_id=user.id, kind=kind, item_id=item_id))
+        db.commit()
+    return {"starred": True}
+
+
+@router.delete("/favorites/{kind}/{item_id}")
+def remove_favorite(kind: Kind, item_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    db.execute(delete(Star).where(Star.user_id == user.id, Star.kind == kind, Star.item_id == item_id))
+    db.commit()
+    return {"starred": False}
+
+
+# ---------------- плейлисты ----------------
+
+
+def _playlist_cover_tracks(db: Session, playlist_id: int, lib_ids: list[int]) -> list[str]:
+    rows = db.execute(
+        select(Album)
+        .join(Track, Track.album_id == Album.id)
+        .join(PlaylistEntry, PlaylistEntry.track_id == Track.id)
+        .where(PlaylistEntry.playlist_id == playlist_id, Album.cover.is_not(None), Album.library_id.in_(lib_ids or [-1]))
+        .order_by(PlaylistEntry.position)
+        .limit(40)
+    ).scalars()
+    covers: list[str] = []
+    for album in rows.unique():
+        url = cover_url(album)
+        if url and url not in covers:
+            covers.append(url)
+        if len(covers) == 4:
+            break
+    return covers
+
+
+def _playlist_summary(db: Session, pl: Playlist, user: User, lib_ids: list[int]) -> dict:
+    stats = db.execute(
+        select(func.count(Track.id), func.coalesce(func.sum(Track.duration), 0))
+        .join(PlaylistEntry, PlaylistEntry.track_id == Track.id)
+        .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(lib_ids or [-1]))
+    ).one()
+    return {
+        "id": pl.id,
+        "name": pl.name,
+        "comment": pl.comment,
+        "is_public": pl.is_public,
+        "owner": {"id": pl.owner_id, "name": pl.owner.display_name or pl.owner.username},
+        "is_owner": pl.owner_id == user.id,
+        "track_count": stats[0],
+        "duration": int(stats[1]),
+        "covers": _playlist_cover_tracks(db, pl.id, lib_ids),
+        "created_at": pl.created_at,
+        "updated_at": pl.updated_at,
+    }
+
+
+def _get_playlist(db: Session, user: User, playlist_id: int, write: bool = False) -> Playlist:
+    pl = db.get(Playlist, playlist_id)
+    if not pl or (pl.owner_id != user.id and not pl.is_public):
+        raise HTTPException(404, "Плейлист не найден")
+    if write and pl.owner_id != user.id:
+        raise HTTPException(403, "Это чужой плейлист")
+    return pl
+
+
+def _append_tracks(db: Session, user: User, pl: Playlist, track_ids: list[int]) -> int:
+    ids = _libs(db, user)
+    valid = set(db.scalars(select(Track.id).where(Track.id.in_(track_ids or [-1]), Track.library_id.in_(ids or [-1]))))
+    pos = db.scalar(select(func.coalesce(func.max(PlaylistEntry.position), -1)).where(PlaylistEntry.playlist_id == pl.id))
+    added = 0
+    for tid in track_ids:
+        if tid in valid:
+            pos += 1
+            db.add(PlaylistEntry(playlist_id=pl.id, track_id=tid, position=pos))
+            added += 1
+    pl.updated_at = datetime.now(timezone.utc)
+    return added
+
+
+@router.get("/playlists")
+def list_playlists(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
+    ids = _libs(db, user)
+    pls = db.scalars(
+        select(Playlist)
+        .where((Playlist.owner_id == user.id) | Playlist.is_public.is_(True))
+        .order_by(desc(Playlist.owner_id == user.id), desc(Playlist.updated_at))
+    )
+    return [_playlist_summary(db, pl, user, ids) for pl in pls]
+
+
+@router.post("/playlists")
+def create_playlist(data: PlaylistCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    pl = Playlist(owner_id=user.id, name=data.name.strip(), comment=data.comment, is_public=data.is_public)
+    db.add(pl)
+    db.flush()
+    if data.track_ids:
+        _append_tracks(db, user, pl, data.track_ids)
+    db.commit()
+    db.refresh(pl)
+    return _playlist_summary(db, pl, user, _libs(db, user))
+
+
+@router.get("/playlists/{playlist_id}")
+def get_playlist(playlist_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    pl = _get_playlist(db, user, playlist_id)
+    ids = _libs(db, user)
+    rows = db.execute(
+        select(PlaylistEntry.id, Track)
+        .join(Track, Track.id == PlaylistEntry.track_id)
+        .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(ids or [-1]))
+        .order_by(PlaylistEntry.position, PlaylistEntry.id)
+    ).all()
+    starred = starred_ids(db, user.id, "track", (t.id for _, t in rows))
+    return {
+        **_playlist_summary(db, pl, user, ids),
+        "tracks": [{**track_out(t, starred), "entry_id": eid} for eid, t in rows],
+    }
+
+
+@router.patch("/playlists/{playlist_id}")
+def update_playlist(
+    playlist_id: int, data: PlaylistUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict:
+    pl = _get_playlist(db, user, playlist_id, write=True)
+    if data.name is not None:
+        pl.name = data.name.strip()
+    if data.comment is not None:
+        pl.comment = data.comment
+    if data.is_public is not None:
+        pl.is_public = data.is_public
+    pl.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return _playlist_summary(db, pl, user, _libs(db, user))
+
+
+@router.delete("/playlists/{playlist_id}")
+def delete_playlist(playlist_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    pl = _get_playlist(db, user, playlist_id, write=True)
+    db.delete(pl)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/playlists/{playlist_id}/tracks")
+def add_to_playlist(
+    playlist_id: int, data: PlaylistTracks, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict:
+    pl = _get_playlist(db, user, playlist_id, write=True)
+    added = _append_tracks(db, user, pl, data.track_ids)
+    db.commit()
+    return {"added": added}
+
+
+@router.delete("/playlists/{playlist_id}/entries/{entry_id}")
+def remove_from_playlist(
+    playlist_id: int, entry_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict:
+    pl = _get_playlist(db, user, playlist_id, write=True)
+    db.execute(delete(PlaylistEntry).where(PlaylistEntry.id == entry_id, PlaylistEntry.playlist_id == pl.id))
+    pl.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True}
+
+
+@router.put("/playlists/{playlist_id}/order")
+def reorder_playlist(
+    playlist_id: int, data: PlaylistReorder, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict:
+    pl = _get_playlist(db, user, playlist_id, write=True)
+    entries = {e.id: e for e in db.scalars(select(PlaylistEntry).where(PlaylistEntry.playlist_id == pl.id))}
+    order = [eid for eid in data.entry_ids if eid in entries]
+    # записи, которых нет в новом порядке (например, из скрытых папок), остаются в конце
+    order += [eid for eid in sorted(entries, key=lambda e: entries[e].position) if eid not in order]
+    for pos, eid in enumerate(order):
+        entries[eid].position = pos
+    pl.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------- поток и обложки ----------------
+
+
+@router.get("/stream/{track_id}")
+def stream(
+    track_id: int,
+    request: Request,
+    q: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_media_user),
+):
+    track = _visible_track(db, user, track_id)
+    quality = q or user.stream_quality or "original"
+    bitrate = QUALITY_BITRATE.get(quality, 0)
+    return stream_track(request, db, track, max_bitrate=bitrate, fmt="mp3" if bitrate else None, browser=True)
+
+
+@router.get("/download/{track_id}")
+def download(track_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(get_media_user)):
+    track = _visible_track(db, user, track_id)
+    return file_response(request, track_file(db, track), content_type(track.suffix), download_name(track))
+
+
+@router.get("/cover/album/{album_id}")
+def album_cover(
+    album_id: int, size: int = 600, db: Session = Depends(get_db), user: User = Depends(get_media_user)
+) -> Response:
+    album = _visible_album(db, user, album_id)
+    path = cover_path(db, album, size)
+    if path is None:
+        raise HTTPException(404, "Нет обложки")
+    return image_response(path)

@@ -1,0 +1,42 @@
+name: selfmusic
+
+services:
+  app:
+    build: .
+    image: selfmusic:latest
+    container_name: selfmusic
+    restart: unless-stopped
+    ports:
+      - "1332:1332"
+    volumes:
+      - ./data:/data                       # база SQLite (если выбрана), конфиг, ключ, кэш обложек
+      - ./uploads:/uploads                 # личные папки пользователей для загрузок
+
+      # Папки с музыкой. Всё, что смонтировано внутрь /music, видно в «обзоре папок» в управлении.
+      # :ro — только чтение (загрузка и редактор тегов в такую папку недоступны).
+      # Уберите :ro, если хотите загружать музыку в эту папку и править теги.
+      - /volume1/music:/music/music:ro
+      # - /volume1/vinyl:/music/vinyl:ro
+      # - /volume2/audiobooks:/music/audiobooks:ro
+    networks:
+      - db                                 # сеть с контейнером MariaDB (хост db)
+    environment:
+      TZ: Asia/Novosibirsk
+      # Защита мастера первого запуска: пока админ не создан, страница настройки
+      # доступна всем, кто знает адрес. Задайте токен — мастер его спросит.
+      # SETUP_TOKEN: "придумайте-длинную-строку"
+
+      # Если указать, шаг выбора БД в мастере пропускается.
+      # DATABASE_URL: "mysql+pymysql://selfmusic:ПАРОЛЬ@db:3306/selfmusic?charset=utf8mb4"
+
+      # Секрет для JWT и шифрования паролей приложений. Если не задан — генерируется в /data/secret.key
+      # SECRET_KEY: ""
+
+    # Чтобы загруженные файлы принадлежали вашему пользователю DSM, а не root,
+    # укажите его uid:gid (узнать: id ИМЯ по SSH). Папки ./data и ./uploads должны быть доступны ему на запись.
+    # user: "1026:100"
+
+networks:
+  db:
+    external: true
+    name: db

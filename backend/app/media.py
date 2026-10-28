@@ -1,0 +1,297 @@
+"""Обложки (с кэшем уменьшенных копий) и отдача аудио: оригинал с поддержкой Range или транскодирование ffmpeg."""
+from __future__ import annotations
+
+import asyncio
+import colorsys
+import hashlib
+import io
+import logging
+import mimetypes
+import os
+import uuid
+from pathlib import Path
+
+from fastapi import HTTPException, Request
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from sqlalchemy.orm import Session
+
+from .config import COVER_CACHE, settings
+from .models import Album, Library, Track
+from .tags import embedded_cover
+
+log = logging.getLogger("uvicorn.error")
+
+MAX_COVER = 1200
+CONTENT_TYPES = {
+    "mp3": "audio/mpeg",
+    "flac": "audio/flac",
+    "m4a": "audio/mp4",
+    "m4b": "audio/mp4",
+    "mp4": "audio/mp4",
+    "aac": "audio/aac",
+    "alac": "audio/mp4",
+    "ogg": "audio/ogg",
+    "oga": "audio/ogg",
+    "opus": "audio/ogg",
+    "wav": "audio/wav",
+    "wma": "audio/x-ms-wma",
+    "ape": "audio/x-ape",
+    "wv": "audio/x-wavpack",
+    "aif": "audio/aiff",
+    "aiff": "audio/aiff",
+    "dsf": "audio/dsf",
+    "mpc": "audio/x-musepack",
+}
+# Что браузеры играют сами. Остальное (APE, WMA, ALAC, DSD…) в вебе отдаём через ffmpeg.
+BROWSER_FRIENDLY = {"mp3", "flac", "m4a", "mp4", "aac", "ogg", "oga", "opus", "wav"}
+
+
+def content_type(suffix: str) -> str:
+    return CONTENT_TYPES.get(suffix.lower()) or mimetypes.guess_type(f"x.{suffix}")[0] or "application/octet-stream"
+
+
+def track_file(db: Session, track: Track) -> Path:
+    lib = db.get(Library, track.library_id)
+    if lib is None:
+        raise HTTPException(404, "Файл не найден")
+    root = Path(lib.path).resolve()
+    path = (root / track.path).resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "Файл недоступен")
+    return path
+
+
+# ---------------- обложки ----------------
+
+
+def _original_cover(db: Session, album: Album) -> bytes | None:
+    if not album.cover:
+        return None
+    lib = db.get(Library, album.library_id)
+    if lib is None:
+        return None
+    root = Path(lib.path).resolve()
+    kind, _, ref = album.cover.partition(":")
+    try:
+        if kind == "file":
+            path = (root / ref).resolve()
+            if root in path.parents and path.is_file():
+                return path.read_bytes()
+        elif kind == "embed":
+            track = db.get(Track, int(ref))
+            if track:
+                return embedded_cover((root / track.path).resolve())
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def cover_path(db: Session, album: Album, size: int | None) -> Path | None:
+    """Путь к кэшированной копии обложки нужного размера (WebP) или None, если обложки нет."""
+    size = max(32, min(int(size or 600), MAX_COVER))
+    # Округляем до «ступенек», чтобы кэш не разрастался от произвольных размеров из приложений
+    for step in (64, 128, 256, 400, 600, 900, 1200):
+        if size <= step:
+            size = step
+            break
+    stamp = int(album.updated_at.timestamp()) if album.updated_at else 0
+    COVER_CACHE.mkdir(parents=True, exist_ok=True)
+    cached = COVER_CACHE / f"al{album.id}-{size}-{stamp}.webp"
+    if cached.exists():
+        return cached
+    miss = COVER_CACHE / f"al{album.id}-none-{stamp}"
+    if miss.exists():
+        return None
+    data = _original_cover(db, album)
+    if not data:
+        miss.touch()
+        return None
+    try:
+        img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        img.thumbnail((size, size), Image.LANCZOS)
+    except Exception:  # noqa: BLE001
+        log.warning("Не удалось прочитать обложку альбома %s", album.id)
+        miss.touch()
+        return None
+    # Уникальное имя временного файла: одну и ту же обложку могут запросить параллельно
+    tmp = cached.with_name(f"{cached.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        img.save(tmp, "WEBP", quality=86, method=4)
+        tmp.replace(cached)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        if not cached.exists():
+            return None
+    # старые версии этой обложки больше не нужны
+    for old in COVER_CACHE.glob(f"al{album.id}-*"):
+        if f"-{stamp}" not in old.name:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+    return cached
+
+
+def placeholder_cover(seed: str, size: int = 600) -> bytes:
+    """Красивая заглушка для приложений: две размытые «капли» на тёмном фоне (как в вебе)."""
+    size = max(64, min(size, 600))
+    h = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
+    hue1 = (h % 360) / 360
+    hue2 = ((h // 360) % 360) / 360
+
+    def rgb(hue: float, light: float, sat: float) -> tuple[int, int, int]:
+        r, g, b = colorsys.hls_to_rgb(hue, light, sat)
+        return int(r * 255), int(g * 255), int(b * 255)
+
+    img = Image.new("RGB", (size, size), rgb(hue1, 0.12, 0.25))
+    layer = Image.new("RGB", (size, size), (0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    s = size
+    draw.ellipse((-s * 0.2, -s * 0.25, s * 0.75, s * 0.6), fill=rgb(hue1, 0.55, 0.75))
+    draw.ellipse((s * 0.35, s * 0.4, s * 1.2, s * 1.2), fill=rgb(hue2, 0.5, 0.7))
+    layer = layer.filter(ImageFilter.GaussianBlur(s * 0.12))
+    img = Image.blend(img, layer, 0.75)
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+def image_response(path: Path) -> FileResponse:
+    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "private, max-age=604800"})
+
+
+# ---------------- аудио ----------------
+
+
+def _parse_range(header: str, size: int) -> tuple[int, int] | None:
+    try:
+        unit, _, spec = header.partition("=")
+        if unit.strip().lower() != "bytes" or "," in spec:
+            return None
+        start_s, _, end_s = spec.strip().partition("-")
+        if start_s == "":
+            length = int(end_s)
+            start, end = max(0, size - length), size - 1
+        else:
+            start = int(start_s)
+            end = int(end_s) if end_s else size - 1
+        end = min(end, size - 1)
+        if start > end or start >= size:
+            return None
+        return start, end
+    except ValueError:
+        return None
+
+
+def file_response(request: Request, path: Path, media_type: str, filename: str | None = None) -> Response:
+    """Отдача файла с поддержкой Range — нужна для перемотки в браузере и приложениях."""
+    size = path.stat().st_size
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=86400"}
+    if filename:
+        from urllib.parse import quote
+
+        headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(filename)}"
+    range_header = request.headers.get("range")
+    if not range_header:
+        return FileResponse(path, media_type=media_type, headers=headers)
+    rng = _parse_range(range_header, size)
+    if rng is None:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    start, end = rng
+    length = end - start + 1
+
+    def iterator():
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = f.read(min(256 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    headers.update({"Content-Range": f"bytes {start}-{end}/{size}", "Content-Length": str(length)})
+    return StreamingResponse(iterator(), status_code=206, media_type=media_type, headers=headers)
+
+
+TRANSCODE_FORMATS = {
+    "mp3": ("libmp3lame", "mp3", "audio/mpeg"),
+    "opus": ("libopus", "ogg", "audio/ogg"),
+    "aac": ("aac", "adts", "audio/aac"),
+}
+
+
+def transcode_response(path: Path, fmt: str, bitrate: int, offset: float = 0) -> StreamingResponse:
+    codec, container, media_type = TRANSCODE_FORMATS.get(fmt, TRANSCODE_FORMATS["mp3"])
+    bitrate = max(32, min(bitrate, 320))
+    cmd = [settings.ffmpeg, "-v", "error", "-nostdin"]
+    if offset > 0:
+        cmd += ["-ss", f"{offset:.2f}"]
+    cmd += ["-i", str(path), "-map", "0:a:0", "-vn", "-c:a", codec, "-b:a", f"{bitrate}k"]
+    if fmt == "opus":
+        cmd += ["-ar", "48000"]
+    cmd += ["-f", container, "pipe:1"]
+
+    async def stream():
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+        )
+        try:
+            assert proc.stdout is not None
+            while True:
+                chunk = await proc.stdout.read(64 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            await proc.wait()
+
+    return StreamingResponse(stream(), media_type=media_type, headers={"Cache-Control": "no-store", "Accept-Ranges": "none"})
+
+
+def stream_track(
+    request: Request,
+    db: Session,
+    track: Track,
+    *,
+    max_bitrate: int = 0,
+    fmt: str | None = None,
+    offset: float = 0,
+    browser: bool = False,
+) -> Response:
+    path = track_file(db, track)
+    suffix = track.suffix.lower()
+    need = False
+    if fmt and fmt not in ("raw", suffix):
+        need = fmt in TRANSCODE_FORMATS
+    if max_bitrate and track.bitrate and track.bitrate > max_bitrate + 16:
+        need = True
+    if browser and (suffix not in BROWSER_FRIENDLY or track.codec == "alac"):
+        need = True
+        max_bitrate = max_bitrate or 320
+    if offset > 0 and not need and fmt != "raw":
+        # Перемотка «на сервере» (OpenSubsonic transcodeOffset) возможна только через ffmpeg
+        need = True
+        max_bitrate = max_bitrate or max(track.bitrate, 320)
+    if not need:
+        return file_response(request, path, content_type(suffix))
+    target = fmt if fmt in TRANSCODE_FORMATS else "mp3"
+    return transcode_response(path, target, max_bitrate or 320, offset)
+
+
+def download_name(track: Track) -> str:
+    base = f"{track.artist_name} - {track.title}" if track.artist_name else track.title
+    base = "".join(c for c in base if c not in '\\/:*?"<>|').strip() or f"track-{track.id}"
+    return f"{base}.{track.suffix}"
+
+
+def ensure_dirs() -> None:
+    os.makedirs(COVER_CACHE, exist_ok=True)

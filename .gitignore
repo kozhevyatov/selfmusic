@@ -1,0 +1,21 @@
+# данные контейнера
+/data/
+/uploads/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node
+node_modules/
+frontend/dist/
+
+# прочее
+.env
+.DS_Store
+.idea/
+.vscode/
+*.log
+docker-compose.override.yml
