@@ -106,6 +106,9 @@ _ASF = {
 _NUM = re.compile(r"\d+")
 
 
+_HIGH_WORD = re.compile("[\xc0-\xff\xa8\xb8]+")
+
+
 def fix_encoding(text: str) -> str:
     """Старые MP3: русские теги в Windows-1251, помеченные как Latin-1 → «Ñèëà ðèôìîâàííûõ».
 
@@ -121,7 +124,10 @@ def fix_encoding(text: str) -> str:
         return text  # уже нормальный Unicode (кириллица, иероглифы и т. п.)
     high = sum(1 for ch in text if "\xc0" <= ch <= "\xff")
     letters = sum(1 for ch in text if ch.isalpha())
-    if high < 2 or high < letters * 0.5:
+    # Слово из 3+ букв, целиком из «верхних» символов (ÃàÃàÁó), в западных языках не встречается —
+    # это кириллица в cp1251, даже если рядом латиница: «ÃàÃàÁó (Karl, @TRVP)».
+    cyr_word = any(len(w) >= 3 for w in _HIGH_WORD.findall(text))
+    if not cyr_word and (high < 2 or high < letters * 0.5):
         return text
     try:
         return raw.decode("cp1251")
