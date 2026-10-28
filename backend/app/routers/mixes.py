@@ -45,7 +45,7 @@ def _card(db: Session, m: mx.MixDef, ids: list[int], now_key: str, season_key: s
             r = by_id.get(i)
             if not r:
                 continue
-            duration += r[2] or 0
+            duration += float(r[2] or 0)
             if r[1] not in album_ids and len(album_ids) < 12:
                 album_ids.append(r[1])
     albums = {a.id: a for a in db.scalars(select(Album).where(Album.id.in_(album_ids or [-1]), Album.cover.is_not(None)))}

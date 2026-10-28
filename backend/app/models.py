@@ -22,7 +22,8 @@ from .db import Base
 
 # MariaDB: FLOAT без точности — 4 байта (mtime ≈1.7e9 теряет ~2 минуты), TEXT — до 64 КБ,
 # а *_ci-сравнение склеивает «Алёна» и «Алена». Для этих полей берём типы точнее.
-Double = Float(precision=53).with_variant(mysql.DOUBLE(), "mysql", "mariadb")
+# asdecimal=False: иначе MariaDB вернёт Decimal, и арифметика с float упадёт
+Double = Float(precision=53).with_variant(mysql.DOUBLE(asdecimal=False), "mysql", "mariadb")
 LongText = Text().with_variant(mysql.MEDIUMTEXT(), "mysql", "mariadb")
 BinKey = String(255).with_variant(mysql.VARCHAR(255, charset="utf8mb4", collation="utf8mb4_bin"), "mysql", "mariadb")
 
