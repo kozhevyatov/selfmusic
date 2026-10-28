@@ -88,7 +88,7 @@ export default function SearchPage() {
         <>
           {d.tracks.length > 0 && (
             <Section title="Треки">
-              <TrackList tracks={d.tracks.slice(0, 20)} showCover showAlbum />
+              <TrackList tracks={d.tracks.slice(0, 20)} showCover showAlbum selectable />
             </Section>
           )}
           {d.artists.length > 0 && (

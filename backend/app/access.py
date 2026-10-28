@@ -87,7 +87,13 @@ def personal_library(db: Session, user: User, create: bool = False) -> Library |
     lib = db.scalar(select(Library).where(Library.owner_id == user.id))
     if lib or not create:
         return lib
-    path = (UPLOAD_ROOT / _slug(user.username)).resolve()
+    # Имя папки — по логину, но «ivan_» и «ivan» дают один slug, а папка удалённого
+    # пользователя может остаться на диске. Чужую или непустую папку не берём — добавляем id.
+    slug = _slug(user.username)
+    path = (UPLOAD_ROOT / slug).resolve()
+    taken = db.scalar(select(Library.id).where(Library.path == path.as_posix()))
+    if taken or (path.exists() and any(p for p in path.iterdir() if not p.name.startswith((".", "@")))):
+        path = (UPLOAD_ROOT / f"{slug}-{user.id}").resolve()
     path.mkdir(parents=True, exist_ok=True)
     lib = Library(
         name=f"Моя музыка · {user.display_name or user.username}",

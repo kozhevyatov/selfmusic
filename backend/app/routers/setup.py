@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import ipaddress
+
 import secrets
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
@@ -32,10 +34,27 @@ def _check_token(token: str | None) -> None:
         raise HTTPException(403, "Неверный токен настройки")
 
 
-def _guard(token: str | None) -> None:
+def _guard(token: str | None, request: Request) -> None:
     if _setup_complete():
         raise HTTPException(409, "Настройка уже завершена")
     _check_token(token)
+    if not settings.setup_token and not _is_local(request):
+        # Без SETUP_TOKEN мастер доступен только из домашней сети: иначе первый, кто
+        # найдёт открытый порт в интернете, стал бы администратором.
+        raise HTTPException(
+            403,
+            "Мастер установки открыт только из локальной сети. Откройте его с компьютера дома "
+            "или задайте SETUP_TOKEN в docker-compose.yml.",
+        )
+
+
+def _is_local(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local
 
 
 def _build_url(cfg: DatabaseConfig) -> str:
@@ -65,8 +84,8 @@ def status() -> SetupStatus:
 
 
 @router.post("/test-db")
-def test_db(cfg: DatabaseConfig, x_setup_token: str | None = Header(default=None)) -> dict:
-    _guard(x_setup_token)
+def test_db(cfg: DatabaseConfig, request: Request, x_setup_token: str | None = Header(default=None)) -> dict:
+    _guard(x_setup_token, request)
     url = _build_url(cfg)
     try:
         dbmod.test_connection(url)
@@ -76,8 +95,8 @@ def test_db(cfg: DatabaseConfig, x_setup_token: str | None = Header(default=None
 
 
 @router.post("/database")
-def configure_database(cfg: DatabaseConfig, x_setup_token: str | None = Header(default=None)) -> dict:
-    _guard(x_setup_token)
+def configure_database(cfg: DatabaseConfig, request: Request, x_setup_token: str | None = Header(default=None)) -> dict:
+    _guard(x_setup_token, request)
     if settings.database_from_env:
         raise HTTPException(409, "База задана через DATABASE_URL")
     url = _build_url(cfg)
@@ -96,7 +115,7 @@ def create_admin(
     response: Response,
     x_setup_token: str | None = Header(default=None),
 ) -> TokenOut:
-    _guard(x_setup_token)
+    _guard(x_setup_token, request)
     if not dbmod.is_configured():
         raise HTTPException(409, "Сначала настройте базу данных")
     with dbmod.session_scope() as db:

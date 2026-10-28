@@ -1,7 +1,9 @@
 import { AlbumCard, CardGrid } from "@/components/Cards";
 import { Avatar, Cover } from "@/components/Cover";
 import { HeartFill, PlayFill } from "@/components/icon";
-import { Heart, Shuffle } from "@/components/icons";
+import { Heart, Link as LinkIcon, Shuffle } from "@/components/icons";
+import { useCanShare } from "@/lib/auth";
+import { dialogs } from "@/lib/dialogs";
 import { Section } from "@/components/Section";
 import { TrackList } from "@/components/TrackList";
 import { ErrorBox, PageLoader } from "@/components/ui/misc";
@@ -19,6 +21,7 @@ export default function ArtistPage() {
   const q = useQuery(["artist", artistId], () => api.library.artist(artistId));
   const a = q.data;
   const palette = usePalette(coverUrl(a?.cover, 96), a?.name ?? "");
+  const canShare = useCanShare();
 
   if (q.isLoading) return <PageLoader />;
   if (q.error || !a) return <ErrorBox error={q.error} />;
@@ -68,11 +71,19 @@ export default function ArtistPage() {
         >
           {a.starred ? <HeartFill className="size-5" /> : <Heart className="size-5" />}
         </button>
+        {canShare && (
+          <button
+            onClick={() => dialogs.share({ kind: "artist", item_id: a.id, label: a.name })}
+            className="flex h-12 items-center gap-2 rounded-full border px-5 text-sm font-bold hover:bg-surface-2"
+          >
+            <LinkIcon className="size-[18px]" /> Поделиться
+          </button>
+        )}
       </div>
 
       {a.top_tracks.length > 0 && (
         <Section title="Популярные треки">
-          <TrackList tracks={a.top_tracks} showCover showAlbum className="-mx-2 sm:-mx-3" />
+          <TrackList tracks={a.top_tracks} showCover showAlbum selectable className="-mx-2 sm:-mx-3" />
         </Section>
       )}
       {a.albums.length > 0 && (

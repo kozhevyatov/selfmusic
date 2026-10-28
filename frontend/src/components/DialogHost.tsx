@@ -7,6 +7,7 @@ import { navigate } from "@/lib/router";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { Cover } from "./Cover";
+import { ShareDialog } from "./ShareDialog";
 import { Check, Image as ImageIcon, LoaderCircle, Plus, TriangleAlert } from "./icons";
 import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
@@ -419,6 +420,8 @@ export function DialogHost() {
       return <AlbumTagEditor albumId={state.albumId} />;
     case "confirm":
       return <Confirm {...state} />;
+    case "share":
+      return <ShareDialog target={state.target} share={state.share} />;
     default:
       return null;
   }

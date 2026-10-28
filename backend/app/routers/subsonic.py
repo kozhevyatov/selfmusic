@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 import secrets
+import threading
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -98,12 +100,16 @@ def _base(status: str = "ok") -> dict:
     }
 
 
+# Управляющие символы из тегов недопустимы в XML 1.0 — один такой символ ломал бы весь ответ
+_XML_BAD = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
 def _xml_value(v: Any) -> str:
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, datetime):
         return _iso(v)
-    return str(v)
+    return _XML_BAD.sub("", str(v))
 
 
 def _to_xml(parent: ET.Element, data: dict) -> None:
@@ -355,6 +361,31 @@ class Ctx:
 # ---------------- авторизация ----------------
 
 
+# Клиент с основным паролем (p=) присылает его в каждом запросе — и на каждую обложку.
+# Argon2 намеренно тяжёлый (~64 МБ памяти и десятки мс на проверку), на NAS сетка из
+# 50 обложек превратилась бы в 50 одновременных хешей. Удачную проверку запоминаем
+# на 10 минут; в ключе — хеш пароля из базы, так что смена пароля сбрасывает кэш.
+_verified: dict[str, float] = {}
+_verified_lock = threading.Lock()
+VERIFY_TTL = 600
+
+
+def _main_password_ok(user: User, password: str) -> bool:
+    key = hashlib.sha256(f"{user.id}\0{user.password_hash}\0{password}".encode()).hexdigest()
+    now = time.monotonic()
+    with _verified_lock:
+        if _verified.get(key, 0) > now:
+            return True
+    if not verify_password(password, user.password_hash):
+        return False
+    with _verified_lock:
+        if len(_verified) > 1000:
+            for k in [k for k, exp in _verified.items() if exp <= now] or list(_verified)[:500]:
+                _verified.pop(k, None)
+        _verified[key] = now + VERIFY_TTL
+    return True
+
+
 def _authenticate(db: Session, p: Params, request: Request) -> User:
     username = p.get("u")
     if not username:
@@ -379,15 +410,15 @@ def _authenticate(db: Session, p: Params, request: Request) -> User:
                     password = bytes.fromhex(password[4:]).decode("utf-8")
                 except ValueError:
                     password = ""
-            ok = (bool(app_password) and secrets.compare_digest(app_password, password)) or verify_password(
-                password, user.password_hash
+            ok = (bool(app_password) and secrets.compare_digest(app_password, password)) or _main_password_ok(
+                user, password
             )
         elif p.get("apiKey"):
             raise SubsonicError(42, "Авторизация по apiKey не поддерживается")
     if not ok:
         ratelimit.fail(username, ip)
         raise SubsonicError(40, "Неверный логин или пароль")
-    ratelimit.success(username)
+    ratelimit.success(username, ip)
     return user
 
 

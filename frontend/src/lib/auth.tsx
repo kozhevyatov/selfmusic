@@ -35,3 +35,9 @@ export function useAuth() {
   if (!ctx) throw new Error("useAuth вне AuthProvider");
   return ctx;
 }
+
+/** Может ли пользователь создавать общие ссылки. */
+export function useCanShare() {
+  const { user } = useAuth();
+  return Boolean(user && (user.is_admin || user.can_share));
+}

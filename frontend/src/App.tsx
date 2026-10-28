@@ -8,6 +8,8 @@ import { DialogHost } from "@/components/DialogHost";
 import { LogoBadge } from "@/components/Logo";
 import SetupPage from "@/pages/SetupPage";
 import WelcomePage from "@/pages/WelcomePage";
+import SharePage from "@/pages/SharePage";
+import SharesPage from "@/pages/SharesPage";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
 import HomePage from "@/pages/HomePage";
@@ -45,6 +47,9 @@ export default function App() {
   const { ready, user } = useAuth();
   const { pathname } = useLocation();
   const status = useQuery(["setup-status"], api.setup.status, { staleTime: 5 * 60_000 });
+
+  // Публичная страница ссылки — без входа и без проверки настройки
+  if (pathname.startsWith("/s/")) return <Routes routes={[{ path: "/s/:token", element: <SharePage /> }]} />;
 
   if (status.isLoading || !ready) return <Splash />;
   if (status.error) return <Splash error="Не удалось связаться с сервером. Проверьте, что контейнер запущен." />;
@@ -87,6 +92,7 @@ export default function App() {
           { path: "/favorites", element: <FavoritesPage /> },
           { path: "/folders", element: <FoldersPage /> },
           { path: "/upload", element: <UploadPage /> },
+          { path: "/shares", element: <SharesPage /> },
           { path: "/profile", element: <ProfilePage /> },
           { path: "/admin", element: <AdminOnly><AdminPage /></AdminOnly> },
           { path: "*", element: <Navigate to="/" /> },

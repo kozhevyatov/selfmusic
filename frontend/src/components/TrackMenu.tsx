@@ -1,4 +1,5 @@
 import { api, downloadUrl, type Track } from "@/lib/api";
+import { useCanShare } from "@/lib/auth";
 import { queueTracks, setFavorite } from "@/lib/actions";
 import { dialogs } from "@/lib/dialogs";
 import { invalidate } from "@/lib/query";
@@ -11,6 +12,7 @@ import {
   Download,
   Ellipsis,
   Heart,
+  Link,
   ListEnd,
   ListPlus,
   ListStart,
@@ -22,7 +24,7 @@ import {
 
 export function trackMenuItems(
   track: Track,
-  opts: { onRemoveFromPlaylist?: () => void; canEdit?: boolean; hideAlbum?: boolean } = {},
+  opts: { onRemoveFromPlaylist?: () => void; canEdit?: boolean; hideAlbum?: boolean; canShare?: boolean } = {},
 ): MenuItem[] {
   const items: MenuItem[] = [
     { label: "Играть следующим", icon: <ListStart />, onSelect: () => queueTracks([track], true) },
@@ -35,6 +37,12 @@ export function trackMenuItems(
     },
     { separator: true },
   ];
+  if (opts.canShare)
+    items.push({
+      label: "Поделиться ссылкой",
+      icon: <Link />,
+      onSelect: () => dialogs.share({ kind: "tracks", track_ids: [track.id], label: `${track.artist} — ${track.title}` }),
+    });
   if (!opts.hideAlbum) items.push({ label: "Перейти к альбому", icon: <Disc3 />, onSelect: () => navigate(`/albums/${track.album_id}`) });
   if (track.artist_id)
     items.push({ label: "Перейти к исполнителю", icon: <MicVocal />, onSelect: () => navigate(`/artists/${track.artist_id}`) });
@@ -90,10 +98,11 @@ export function TrackMenuButton({
   className,
   ...opts
 }: { track: Track; className?: string } & Parameters<typeof trackMenuItems>[1]) {
+  const canShare = useCanShare();
   return (
     <Menu
       label={`Действия: ${track.title}`}
-      items={trackMenuItems(track, opts)}
+      items={trackMenuItems(track, { canShare, ...opts })}
       trigger={(p) => (
         <button
           {...p}

@@ -70,6 +70,7 @@ class UserOut(BaseModel):
     upload_mode: str
     upload_quota_mb: int
     upload_max_files: int
+    can_share: bool
     created_at: datetime
     last_seen_at: datetime | None = None
 
@@ -101,12 +102,14 @@ class PublicSettings(BaseModel):
 
 class AdminSettings(PublicSettings):
     scan_interval: int
+    public_url: str
 
 
 class SettingsUpdate(BaseModel):
     site_name: str | None = Field(default=None, max_length=100)
     registration_mode: Literal["open", "closed"] | None = None
     scan_interval: int | None = Field(default=None, ge=0, le=7 * 24 * 60)
+    public_url: str | None = Field(default=None, max_length=255)
 
 
 # ---------- admin: пользователи ----------
@@ -119,6 +122,7 @@ class UserAdminCreate(BaseModel):
     upload_mode: UploadMode = "none"
     upload_quota_mb: int = Field(default=0, ge=0, le=10_000_000)
     upload_max_files: int = Field(default=0, ge=0, le=10_000_000)
+    can_share: bool = False
 
 
 class UserAdminUpdate(BaseModel):
@@ -130,6 +134,7 @@ class UserAdminUpdate(BaseModel):
     upload_mode: UploadMode | None = None
     upload_quota_mb: int | None = Field(default=None, ge=0, le=10_000_000)
     upload_max_files: int | None = Field(default=None, ge=0, le=10_000_000)
+    can_share: bool | None = None
 
 
 class PasswordReset(BaseModel):
@@ -188,4 +193,42 @@ class PlaylistReorder(BaseModel):
 
 
 class PlayIn(BaseModel):
+    track_id: int
+
+
+# ---------- общие ссылки ----------
+ShareKind = Literal["folder", "album", "artist", "playlist", "tracks"]
+
+
+class ShareCreate(BaseModel):
+    kind: ShareKind
+    library_id: int | None = None
+    folder: str = Field(default="", max_length=2000)
+    item_id: int | None = None
+    track_ids: list[int] = []
+    title: str = Field(default="", max_length=255)
+    description: str = Field(default="", max_length=2000)
+    password: str | None = Field(default=None, max_length=128)
+    expires_at: datetime | None = None
+    allow_download: bool = False
+    max_views: int | None = Field(default=None, ge=1, le=1_000_000)
+
+
+class ShareUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+    # "" — убрать пароль, None — не менять
+    password: str | None = Field(default=None, max_length=128)
+    expires_at: datetime | None = None
+    clear_expiry: bool = False
+    allow_download: bool | None = None
+    max_views: int | None = Field(default=None, ge=0, le=1_000_000)  # 0 — без лимита
+    enabled: bool | None = None
+
+
+class ShareUnlock(BaseModel):
+    password: str = Field(max_length=128)
+
+
+class SharePlay(BaseModel):
     track_id: int

@@ -35,5 +35,8 @@ EXPOSE 1332
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"PORT\"]}/api/health', timeout=4)"
 
-# --proxy-headers: корректная схема (https) за reverse proxy Synology
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips='*'"]
+# Заголовки X-Forwarded-* (реальный IP и https) принимаем только от прокси из локальных сетей:
+# reverse proxy DSM ходит в контейнер через docker-сеть 172.x. От остальных — игнорируем,
+# иначе можно подделать IP и обойти защиту от перебора паролей.
+ENV FORWARDED_ALLOW_IPS="127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --proxy-headers --forwarded-allow-ips=\"${FORWARDED_ALLOW_IPS}\" --timeout-keep-alive 30"]

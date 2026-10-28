@@ -11,6 +11,8 @@ DEFAULTS: dict[str, str] = {
     "setup_complete": "0",
     # Автоматическое сканирование папок, минут (0 — выключено)
     "scan_interval": "60",
+    # Внешний адрес сервиса (https://music.example.ru) — для публичных ссылок
+    "public_url": "",
 }
 
 
@@ -39,4 +41,5 @@ def admin_settings(db: Session) -> dict:
     return {
         **public_settings(db),
         "scan_interval": int(interval) if interval.isdigit() else 60,
+        "public_url": get_setting(db, "public_url"),
     }

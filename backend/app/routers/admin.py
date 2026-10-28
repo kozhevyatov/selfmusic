@@ -54,6 +54,8 @@ def update_settings(data: SettingsUpdate, db: Session = Depends(get_db), _: User
         set_setting(db, "registration_mode", data.registration_mode)
     if data.scan_interval is not None:
         set_setting(db, "scan_interval", str(data.scan_interval))
+    if data.public_url is not None:
+        set_setting(db, "public_url", data.public_url.strip().rstrip("/"))
     db.commit()
     return admin_settings(db)
 
@@ -99,6 +101,7 @@ def create_user(data: UserAdminCreate, db: Session = Depends(get_db), _: User = 
         upload_mode=data.upload_mode,
         upload_quota_mb=data.upload_quota_mb,
         upload_max_files=data.upload_max_files,
+        can_share=data.can_share,
     )
     db.add(user)
     db.flush()
@@ -141,6 +144,8 @@ def update_user(
         user.upload_quota_mb = data.upload_quota_mb
     if data.upload_max_files is not None:
         user.upload_max_files = data.upload_max_files
+    if data.can_share is not None:
+        user.can_share = data.can_share
     db.commit()
     db.refresh(user)
     return _user_out(db, user)

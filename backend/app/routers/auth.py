@@ -48,7 +48,7 @@ def login(data: LoginIn, request: Request, response: Response, db: Session = Dep
     if not user or not verify_password(data.password, user.password_hash):
         ratelimit.fail(login_value, ip)
         raise HTTPException(401, "Неверный логин или пароль")
-    ratelimit.success(login_value)
+    ratelimit.success(login_value, ip)
     if not user.is_active:
         raise HTTPException(403, "Учётная запись отключена")
     user.last_seen_at = datetime.now(timezone.utc)

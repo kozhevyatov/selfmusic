@@ -14,9 +14,17 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
+
+
+# MariaDB: FLOAT без точности — 4 байта (mtime ≈1.7e9 теряет ~2 минуты), TEXT — до 64 КБ,
+# а *_ci-сравнение склеивает «Алёна» и «Алена». Для этих полей берём типы точнее.
+Double = Float(precision=53).with_variant(mysql.DOUBLE(), "mysql", "mariadb")
+LongText = Text().with_variant(mysql.MEDIUMTEXT(), "mysql", "mariadb")
+BinKey = String(255).with_variant(mysql.VARCHAR(255, charset="utf8mb4", collation="utf8mb4_bin"), "mysql", "mariadb")
 
 
 def utcnow() -> datetime:
@@ -46,6 +54,8 @@ class User(Base):
     upload_mode: Mapped[str] = mapped_column(String(16), default="none")
     upload_quota_mb: Mapped[int] = mapped_column(Integer, default=0)  # 0 — без лимита
     upload_max_files: Mapped[int] = mapped_column(Integer, default=0)  # 0 — без лимита
+    # Может создавать публичные ссылки (администратор — всегда)
+    can_share: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -113,7 +123,7 @@ class Artist(Base):
     name: Mapped[str] = mapped_column(String(512))
     sort_name: Mapped[str] = mapped_column(String(512), default="")
     # Нормализованное имя (нижний регистр, без лишних пробелов) — для склейки дублей
-    name_key: Mapped[str] = mapped_column(String(255), unique=True)
+    name_key: Mapped[str] = mapped_column(BinKey, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -163,7 +173,7 @@ class Track(Base):
     disc_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     genre: Mapped[str] = mapped_column(String(128), default="", index=True)
-    duration: Mapped[float] = mapped_column(Float, default=0)
+    duration: Mapped[float] = mapped_column(Double, default=0)
     bitrate: Mapped[int] = mapped_column(Integer, default=0)  # кбит/с
     sample_rate: Mapped[int] = mapped_column(Integer, default=0)
     bit_depth: Mapped[int] = mapped_column(Integer, default=0)
@@ -171,9 +181,9 @@ class Track(Base):
     suffix: Mapped[str] = mapped_column(String(16), default="")
     codec: Mapped[str] = mapped_column(String(32), default="")
     size: Mapped[int] = mapped_column(BigInteger, default=0)
-    mtime: Mapped[float] = mapped_column(Float, default=0)
+    mtime: Mapped[float] = mapped_column(Double, default=0)
     has_cover: Mapped[bool] = mapped_column(Boolean, default=False)
-    lyrics: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lyrics: Mapped[str | None] = mapped_column(LongText, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     album: Mapped[Album] = relationship(lazy="joined")
@@ -244,8 +254,41 @@ class PlayQueue(Base):
     __tablename__ = "play_queues"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    track_ids: Mapped[str] = mapped_column(Text, default="[]")
+    track_ids: Mapped[str] = mapped_column(LongText, default="[]")
     current_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     position_ms: Mapped[int] = mapped_column(BigInteger, default=0)
     changed_by: Mapped[str] = mapped_column(String(128), default="")
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Share(Base):
+    """Публичная ссылка на музыку: папка, альбом, исполнитель, плейлист или выбранные треки."""
+
+    __tablename__ = "shares"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # folder | album | artist | playlist | tracks
+    kind: Mapped[str] = mapped_column(String(16))
+    library_id: Mapped[int | None] = mapped_column(ForeignKey("libraries.id", ondelete="CASCADE"), nullable=True)
+    folder: Mapped[str] = mapped_column(Text, default="")  # для kind=folder: путь от корня папки ("" — вся папка)
+    item_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # альбом / исполнитель / плейлист
+    track_ids: Mapped[str] = mapped_column(LongText, default="[]")  # для kind=tracks
+    title: Mapped[str] = mapped_column(String(255), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    allow_download: Mapped[bool] = mapped_column(Boolean, default=False)
+    max_views: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    views: Mapped[int] = mapped_column(Integer, default=0)
+    plays: Mapped[int] = mapped_column(Integer, default=0)
+    downloads: Mapped[int] = mapped_column(Integer, default=0)
+    last_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Меняется при смене пароля — старые «разблокировки» перестают действовать
+    secret_version: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    owner: Mapped[User] = relationship(lazy="joined")

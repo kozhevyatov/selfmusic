@@ -1,7 +1,8 @@
 import { AlbumCard, CardGrid } from "@/components/Cards";
 import { Cover } from "@/components/Cover";
 import { HeartFill, PlayFill } from "@/components/icon";
-import { Download, Ellipsis, Heart, ListEnd, ListPlus, ListStart, Pencil, Shuffle } from "@/components/icons";
+import { Download, Ellipsis, Heart, Link as LinkIcon, ListEnd, ListPlus, ListStart, Pencil, Shuffle } from "@/components/icons";
+import { useCanShare } from "@/lib/auth";
 import { Section } from "@/components/Section";
 import { TrackList } from "@/components/TrackList";
 import { Badge, ErrorBox, PageLoader } from "@/components/ui/misc";
@@ -22,6 +23,7 @@ export default function AlbumPage() {
   const q = useQuery(["album", albumId], () => api.library.album(albumId));
   const a = q.data;
   const palette = usePalette(coverUrl(a?.cover, 96), a ? a.name + a.artist : "");
+  const canShare = useCanShare();
 
   if (q.isLoading) return <PageLoader />;
   if (q.error || !a) return <ErrorBox error={q.error} />;
@@ -89,6 +91,14 @@ export default function AlbumPage() {
         <button onClick={() => dialogs.addToPlaylist(a.tracks)} className="hidden h-12 items-center gap-2 rounded-full border px-5 text-sm font-bold hover:bg-surface-2 sm:flex">
           <ListPlus className="size-[18px]" /> В плейлист
         </button>
+        {canShare && (
+          <button
+            onClick={() => dialogs.share({ kind: "album", item_id: a.id, label: `${a.artist} — ${a.name}` })}
+            className="hidden h-12 items-center gap-2 rounded-full border px-5 text-sm font-bold hover:bg-surface-2 sm:flex"
+          >
+            <LinkIcon className="size-[18px]" /> Поделиться
+          </button>
+        )}
         {a.can_edit && (
           <button onClick={() => dialogs.editAlbum(a.id)} className="hidden h-12 items-center gap-2 rounded-full border px-5 text-sm font-bold hover:bg-surface-2 sm:flex">
             <Pencil className="size-[18px]" /> Теги
@@ -100,6 +110,9 @@ export default function AlbumPage() {
             { label: "Играть следующим", icon: <ListStart />, onSelect: () => queueTracks(a.tracks, true) },
             { label: "Добавить в очередь", icon: <ListEnd />, onSelect: () => queueTracks(a.tracks, false) },
             { label: "В плейлист…", icon: <ListPlus />, onSelect: () => dialogs.addToPlaylist(a.tracks) },
+            ...(canShare
+              ? [{ label: "Поделиться ссылкой", icon: <LinkIcon />, onSelect: () => dialogs.share({ kind: "album", item_id: a.id, label: `${a.artist} — ${a.name}` }) }]
+              : []),
             ...(a.can_edit ? [{ label: "Редактировать теги и обложку", icon: <Pencil />, onSelect: () => dialogs.editAlbum(a.id) }] : []),
             {
               label: "Скачать треки",
@@ -126,7 +139,7 @@ export default function AlbumPage() {
         {a.quality && <Badge className="ml-auto hidden sm:inline-flex">{a.quality}</Badge>}
       </div>
 
-      <TrackList tracks={a.tracks} numbers="track" discs canEdit={a.can_edit} className="-mx-2 sm:-mx-3" />
+      <TrackList tracks={a.tracks} numbers="track" discs canEdit={a.can_edit} selectable className="-mx-2 sm:-mx-3" />
 
       <p className="text-[13px] text-faint">
         Папка «{a.library_name}» · добавлен {new Date(a.created_at.endsWith("Z") ? a.created_at : a.created_at + "Z").toLocaleDateString("ru-RU")}

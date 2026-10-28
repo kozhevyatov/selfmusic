@@ -44,7 +44,7 @@ export default function FavoritesPage() {
       <ErrorBox error={fav.error} />
       {d && tab === "tracks" &&
         (d.tracks.length ? (
-          <TrackList tracks={d.tracks} showCover showAlbum className="-mx-2 sm:-mx-3" />
+          <TrackList tracks={d.tracks} showCover showAlbum selectable className="-mx-2 sm:-mx-3" />
         ) : (
           <Empty icon={<Heart />} title="Пока пусто" text="Нажмите на сердечко у трека — он появится здесь." />
         ))}

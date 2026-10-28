@@ -36,8 +36,12 @@ type Tab = "users" | "libraries" | "general";
 function GeneralTab() {
   const s = useQuery(["admin", "settings"], api.admin.settings);
   const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
   useEffect(() => {
-    if (s.data) setName(s.data.site_name);
+    if (s.data) {
+      setName(s.data.site_name);
+      setUrl(s.data.public_url);
+    }
   }, [s.data]);
   if (!s.data) return <PageLoader />;
   const update = async (patch: Parameters<typeof api.admin.updateSettings>[0], msg = "Сохранено") => {
@@ -62,6 +66,24 @@ function GeneralTab() {
           <div className="min-w-60 flex-1">
             <Field id="site" label="Название сервиса">
               <Input id="site" value={name} onChange={(e) => setName(e.target.value)} />
+            </Field>
+          </div>
+          <Button type="submit" variant="secondary">
+            Сохранить
+          </Button>
+        </form>
+      </Card>
+      <Card className="flex flex-col gap-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            update({ public_url: url });
+          }}
+          className="flex flex-wrap items-end gap-3"
+        >
+          <div className="min-w-60 flex-1">
+            <Field id="public-url" label="Внешний адрес сервиса" hint="С него строятся общие ссылки, например https://music.nskarl.ru. Пусто — адрес, с которого вы открыли сайт.">
+              <Input id="public-url" type="url" placeholder={window.location.origin} value={url} onChange={(e) => setUrl(e.target.value)} />
             </Field>
           </div>
           <Button type="submit" variant="secondary">
@@ -425,6 +447,15 @@ function UserDetail({ user, libs, me }: { user: AdminUser; libs: AdminLibrary[];
           </span>
           <Switch label="Активен" checked={user.is_active} disabled={user.id === me} onChange={(v) => update({ is_active: v })} />
         </label>
+        <label className="flex items-center justify-between gap-3 rounded-2xl bg-surface-2/60 p-4 sm:col-span-2">
+          <span>
+            <span className="block font-bold">Может делиться ссылками</span>
+            <span className="text-[13px] text-muted">
+              Публичные ссылки на альбомы, папки, плейлисты и треки — только из доступных ему папок. Если выключить, его ссылки перестанут открываться.
+            </span>
+          </span>
+          <Switch label="Может делиться ссылками" checked={user.is_admin || user.can_share} disabled={user.is_admin} onChange={(v) => update({ can_share: v })} />
+        </label>
       </div>
 
       <section className="flex flex-col gap-3">
@@ -578,7 +609,7 @@ function UserDetail({ user, libs, me }: { user: AdminUser; libs: AdminLibrary[];
 }
 
 function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (id: number) => void }) {
-  const empty = { username: "", display_name: "", email: "", password: "", is_admin: false, upload_mode: "none" as UploadMode, upload_quota_mb: 0, upload_max_files: 0 };
+  const empty = { username: "", display_name: "", email: "", password: "", is_admin: false, upload_mode: "none" as UploadMode, upload_quota_mb: 0, upload_max_files: 0, can_share: false };
   const [form, setForm] = useState(empty);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -641,6 +672,10 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
           </Select>
         </Field>
         <label className="flex items-center justify-between gap-3 rounded-2xl border p-4">
+          <span className="font-bold">Может делиться ссылками</span>
+          <Switch label="Может делиться ссылками" checked={form.can_share} onChange={(v) => setForm({ ...form, can_share: v })} />
+        </label>
+        <label className="flex items-center justify-between gap-3 rounded-2xl border p-4">
           <span className="font-bold">Администратор</span>
           <Switch label="Администратор" checked={form.is_admin} onChange={(v) => setForm({ ...form, is_admin: v })} />
         </label>
@@ -702,7 +737,7 @@ function UsersTab() {
                 <span className="block truncate text-[13px] text-muted">{u.username}</span>
               </span>
               <span className={cn("text-[12px] font-bold", u.is_admin ? "text-accent-ink" : "text-faint")}>
-                {u.is_admin ? "Админ" : u.upload_mode !== "none" ? "Загрузка" : "Слушатель"}
+                {u.is_admin ? "Админ" : u.upload_mode !== "none" ? "Загрузка" : u.can_share ? "Ссылки" : "Слушатель"}
               </span>
             </button>
           ))}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -104,8 +105,16 @@ def upload_info(db: Session = Depends(get_db), user: User = Depends(get_current_
     return _info(db, user)
 
 
+# Сколько байт каждый пользователь загружает прямо сейчас — чтобы параллельные загрузки
+# не проскочили лимит, проверенный до записи.
+_inflight: dict[int, int] = {}
+_inflight_lock = threading.Lock()
+
+
+# Обычная (не async) функция: FastAPI выполнит её в пуле потоков, и запись файла,
+# чтение тегов и индексация не блокируют остальные запросы (потоки, обложки).
 @router.post("/uploads")
-async def upload_file(
+def upload_file(
     file: UploadFile = File(...),
     library_id: int = Form(...),
     relative_path: str = Form(""),
@@ -131,16 +140,36 @@ async def upload_file(
     limit_files = 0 if user.is_admin else user.upload_max_files
     if is_audio and limit_files and used_files >= limit_files:
         raise HTTPException(413, f"Достигнут лимит: {limit_files} файлов")
-    allowed = MAX_FILE if not limit_bytes else min(MAX_FILE, limit_bytes - used_bytes)
-    if allowed <= 0:
-        raise HTTPException(413, "Закончилось место для загрузок")
+    with _inflight_lock:
+        pending = _inflight.get(user.id, 0)
+        allowed = MAX_FILE if not limit_bytes else min(MAX_FILE, limit_bytes - used_bytes - pending)
+        if allowed <= 0:
+            raise HTTPException(413, "Закончилось место для загрузок")
+        declared = getattr(file, "size", None) or 0
+        reserve = min(declared or allowed, allowed)
+        _inflight[user.id] = pending + reserve
+    try:
+        return _store_upload(db, user, lib, file, original, ext, is_audio, allowed, relative_path, organize, batch)
+    finally:
+        with _inflight_lock:
+            left = _inflight.get(user.id, 0) - reserve
+            if left > 0:
+                _inflight[user.id] = left
+            else:
+                _inflight.pop(user.id, None)
+
+
+def _store_upload(
+    db: Session, user: User, lib: Library, file: UploadFile, original: str, ext: str, is_audio: bool,
+    allowed: int, relative_path: str, organize: bool, batch: str,
+) -> dict:
 
     root = Path(lib.path).resolve()
     tmp = root / f".selfmusic-upload-{uuid.uuid4().hex}{ext}"
     size = 0
     try:
         with open(tmp, "wb") as out:
-            while chunk := await file.read(CHUNK):
+            while chunk := file.file.read(CHUNK):
                 size += len(chunk)
                 if size > allowed:
                     raise HTTPException(
@@ -242,16 +271,25 @@ def my_uploads(db: Session = Depends(get_db), user: User = Depends(get_current_u
     ]
 
 
+# Что можно удалить вместе с последним треком папки. Буклеты, .cue, .log, видео — не трогаем.
+_DISPOSABLE_EXT = set(IMAGE_EXTENSIONS) | {".lrc"}
+_JUNK = {".DS_Store", "Thumbs.db", "desktop.ini", "@eaDir"}
+
+
 def _remove_empty_dirs(root: Path, start: Path) -> None:
     current = start
     while current != root and root in current.parents:
         try:
-            leftovers = [p for p in current.iterdir() if not p.name.startswith((".", "@"))]
-            if any(p.suffix.lower() in AUDIO_EXTENSIONS or p.is_dir() for p in leftovers):
-                return
-            for p in current.iterdir():  # остались только обложки/служебные файлы
-                if p.is_file():
-                    p.unlink()
+            entries = list(current.iterdir())
+            junk = [p for p in entries if p.name in _JUNK or p.name.startswith("._")]
+            rest = [p for p in entries if p not in junk]
+            if any(p.is_dir() or p.suffix.lower() not in _DISPOSABLE_EXT for p in rest):
+                return  # в папке есть что-то ещё — оставляем как есть
+            for p in rest + junk:
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)  # @eaDir — миниатюры DSM
+                else:
+                    p.unlink(missing_ok=True)
             current.rmdir()
         except OSError:
             return
@@ -437,7 +475,7 @@ def put_album_tags(
 
 
 @router.post("/albums/{album_id}/cover")
-async def set_album_cover(
+def set_album_cover(
     album_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -453,7 +491,7 @@ async def set_album_cover(
     reason = _edit_reason(db, user, lib, tracks[0])
     if reason:
         raise HTTPException(403, reason)
-    data = await file.read(25 * MB + 1)
+    data = file.file.read(25 * MB + 1)
     if len(data) > 25 * MB:
         raise HTTPException(413, "Картинка больше 25 МБ")
     try:

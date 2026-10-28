@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { Track } from "@/lib/api";
 import { setFavorite } from "@/lib/actions";
 import { formatTime } from "@/lib/format";
@@ -7,7 +7,10 @@ import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { Cover } from "./Cover";
 import { HeartFill, PauseFill, PlayFill } from "./icon";
-import { Heart } from "./icons";
+import { Check, Heart, Link as LinkIcon, ListEnd, ListPlus, X } from "./icons";
+import { useCanShare } from "@/lib/auth";
+import { queueTracks } from "@/lib/actions";
+import { dialogs } from "@/lib/dialogs";
 import { TrackMenuButton } from "./TrackMenu";
 
 function Equalizer() {
@@ -31,25 +34,59 @@ type RowProps = {
   canEdit?: boolean;
   onPlay: (i: number) => void;
   onRemove?: (t: Track) => void;
+  selecting?: boolean;
+  selected?: boolean;
+  onSelect?: (i: number) => void;
 };
 
-const Row = memo(function Row({ track, index, number, active, playing, showAlbum, showCover, canEdit, onPlay, onRemove }: RowProps) {
+const Row = memo(function Row({
+  track,
+  index,
+  number,
+  active,
+  playing,
+  showAlbum,
+  showCover,
+  canEdit,
+  onPlay,
+  onRemove,
+  selecting,
+  selected,
+  onSelect,
+}: RowProps) {
   const coarse = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
   return (
     <div
       role="listitem"
-      onClick={() => coarse && onPlay(index)}
-      onDoubleClick={() => onPlay(index)}
+      onClick={() => (selecting ? onSelect?.(index) : coarse && onPlay(index))}
+      onDoubleClick={() => !selecting && onPlay(index)}
       className={cn(
         "group grid items-center gap-3 rounded-xl px-2 py-2 select-none sm:gap-4 sm:px-3",
         showAlbum
           ? "grid-cols-[2rem_minmax(0,1fr)_auto] md:grid-cols-[2.5rem_minmax(0,1.4fr)_minmax(0,1fr)_auto]"
           : "grid-cols-[2rem_minmax(0,1fr)_auto] sm:grid-cols-[2.5rem_minmax(0,1fr)_auto]",
-        active ? "bg-surface-2/80" : "hover:bg-surface-2/60",
+        selected ? "bg-accent/12" : active ? "bg-surface-2/80" : "hover:bg-surface-2/60",
+        selecting && "cursor-pointer",
       )}
     >
       <div className="relative flex h-10 items-center justify-center">
-        {showCover ? (
+        {selecting ? (
+          <button
+            role="checkbox"
+            aria-checked={Boolean(selected)}
+            aria-label={`Выбрать «${track.title}»`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect?.(index);
+            }}
+            className={cn(
+              "flex size-6 items-center justify-center rounded-md border-2 transition",
+              selected ? "border-accent bg-accent text-accent-fg" : "border-faint/60",
+            )}
+          >
+            {selected && <Check className="size-4" strokeWidth={3} />}
+          </button>
+        ) : showCover ? (
           <div className="relative size-10">
             <Cover src={track.cover} seed={track.album + track.album_artist} size={96} rounded="rounded-md" />
             <button
@@ -154,6 +191,7 @@ export function TrackList({
   discs = false,
   canEdit,
   onRemove,
+  selectable = false,
   className,
 }: {
   tracks: Track[];
@@ -163,15 +201,105 @@ export function TrackList({
   discs?: boolean;
   canEdit?: boolean;
   onRemove?: (t: Track) => void;
+  /** Можно выбрать несколько треков галочками (поделиться, в плейлист, в очередь) */
+  selectable?: boolean;
   className?: string;
 }) {
   const currentId = usePlayer((s) => s.queue[s.index]?.id ?? null);
   const playing = usePlayer((s) => s.playing || s.loading);
+  const hasTrack = usePlayer((s) => s.queue.length > 0);
   const onPlay = useMemo(() => (i: number) => player.play(tracks, i), [tracks]);
   const multiDisc = discs && new Set(tracks.map((t) => t.disc_no ?? 1)).size > 1;
+  const canShare = useCanShare();
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const onSelect = useCallback(
+    (i: number) =>
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(i)) next.delete(i);
+        else next.add(i);
+        return next;
+      }),
+    [],
+  );
+  const stop = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
+  useEffect(() => {
+    if (!selecting) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && stop();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selecting]);
+  const chosen = tracks.filter((_, i) => selected.has(i));
 
   return (
     <div role="list" aria-label="Треки" className={cn("flex flex-col", className)}>
+      {selectable && tracks.length > 1 && !selecting && (
+        <div className="flex justify-end px-2 pb-1 sm:px-3">
+          <button onClick={() => setSelecting(true)} className="flex h-8 items-center gap-1.5 rounded-full px-3 text-[13px] font-bold text-muted hover:bg-surface-2 hover:text-fg">
+            <Check className="size-4" /> Выбрать треки
+          </button>
+        </div>
+      )}
+      {selecting && (
+        <div
+          className={cn(
+            "glass fixed inset-x-2 z-50 flex flex-wrap items-center gap-2 rounded-2xl border p-2 pl-4 shadow-2xl shadow-black/30 lg:right-6 lg:left-[284px]",
+            hasTrack ? "bottom-[calc(150px+env(safe-area-inset-bottom))] lg:bottom-[104px]" : "bottom-[calc(84px+env(safe-area-inset-bottom))] lg:bottom-6",
+          )}
+        >
+          <span className="mr-auto text-sm font-extrabold">Выбрано: {chosen.length}</span>
+          <button
+            onClick={() => setSelected(selected.size === tracks.length ? new Set() : new Set(tracks.map((_, i) => i)))}
+            className="h-9 rounded-full px-3 text-[13px] font-bold text-muted hover:bg-surface-2 hover:text-fg"
+          >
+            {selected.size === tracks.length ? "Снять все" : "Все"}
+          </button>
+          <button
+            disabled={!chosen.length}
+            onClick={() => (player.play(chosen, 0), stop())}
+            className="flex h-9 items-center gap-1.5 rounded-full px-3 text-[13px] font-bold hover:bg-surface-2 disabled:opacity-40"
+          >
+            <PlayFill className="size-3.5" /> Играть
+          </button>
+          <button
+            disabled={!chosen.length}
+            onClick={() => (queueTracks(chosen, false), stop())}
+            className="hidden h-9 items-center gap-1.5 rounded-full px-3 text-[13px] font-bold hover:bg-surface-2 disabled:opacity-40 sm:flex"
+          >
+            <ListEnd className="size-4" /> В очередь
+          </button>
+          <button
+            disabled={!chosen.length}
+            onClick={() => (dialogs.addToPlaylist(chosen), stop())}
+            className="flex h-9 items-center gap-1.5 rounded-full px-3 text-[13px] font-bold hover:bg-surface-2 disabled:opacity-40"
+          >
+            <ListPlus className="size-4" /> В плейлист
+          </button>
+          {canShare && (
+            <button
+              disabled={!chosen.length}
+              onClick={() => {
+                dialogs.share({
+                  kind: "tracks",
+                  track_ids: chosen.map((t) => t.id),
+                  label: chosen.length === 1 ? chosen[0].title : `${chosen.length} треков`,
+                });
+                stop();
+              }}
+              className="flex h-9 items-center gap-1.5 rounded-full bg-accent px-3.5 text-[13px] font-bold text-accent-fg disabled:opacity-40"
+            >
+              <LinkIcon className="size-4" /> Поделиться
+            </button>
+          )}
+          <button aria-label="Отменить выбор" onClick={stop} className="flex size-9 items-center justify-center rounded-full text-muted hover:bg-surface-2 hover:text-fg">
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
       {tracks.map((t, i) => {
         const showDisc = multiDisc && (i === 0 || (tracks[i - 1].disc_no ?? 1) !== (t.disc_no ?? 1));
         const key = t.entry_id ? `e${t.entry_id}` : `${t.id}-${i}`;
@@ -193,6 +321,9 @@ export function TrackList({
               canEdit={canEdit}
               onPlay={onPlay}
               onRemove={onRemove}
+              selecting={selecting}
+              selected={selected.has(i)}
+              onSelect={onSelect}
             />
           </Fragment>
         );

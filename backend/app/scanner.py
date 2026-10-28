@@ -32,11 +32,14 @@ AUDIO_EXTENSIONS = {
 }
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 COVER_NAMES = ("cover", "folder", "front", "album", "albumart", "albumartsmall", "artwork", "thumb")
-SKIP_DIRS = re.compile(r"^(\.|@|#recycle|\$recycle)", re.I)
+# .скрытые, @eaDir (миниатюры DSM), #recycle и #snapshot (корзина и снимки Btrfs), $RECYCLE.BIN
+SKIP_DIRS = re.compile(r"^(\.|@|#|\$recycle)", re.I)
 DISC_DIR = re.compile(r"^(cd|disc|disk|диск|диск\s*№?)\s*[-_.]?\s*\d+\b.*$", re.I)
 VARIOUS = "Разные исполнители"
 UNKNOWN_ARTIST = "Неизвестный исполнитель"
 BATCH = 200
+COMMIT_EVERY = 2.0  # сек: не держим запись в SQLite дольше — веб-запросы ждут
+LYRICS_MAX = 100_000
 
 
 def utcnow() -> datetime:
@@ -53,6 +56,23 @@ def sort_name(name: str) -> str:
         if low.lower().startswith(article):
             return low[len(article):]
     return low
+
+
+def clean(value: str | None, limit: int | None = None) -> str:
+    """Строка, которую точно примет БД: без «сломанных» символов из кривых тегов и имён файлов."""
+    if not value:
+        return ""
+    value = value.encode("utf-8", "replace").decode("utf-8").replace("\x00", "")
+    return value[:limit] if limit else value
+
+
+def decodable(rel: str) -> bool:
+    """Имя файла в неизвестной кодировке (старые zip-архивы из Windows) в базу не запишется."""
+    try:
+        rel.encode("utf-8")
+        return True
+    except UnicodeEncodeError:
+        return False
 
 
 def path_hash(rel: str) -> str:
@@ -89,13 +109,18 @@ class IndexContext:
         self.new_albums: set[int] = set()
         self.touched: set[int] = set()
 
+    def reset_caches(self) -> None:
+        """После отката точки сохранения в кэшах могут остаться id, которых нет в базе."""
+        self.artists.clear()
+        self.albums.clear()
+
 
 def album_for(db: Session, lib: Library, rel: str, meta: TrackMeta, ctx: IndexContext) -> Album:
     folder = os.path.dirname(rel)
     parts = folder.split("/") if folder else []
     if parts and DISC_DIR.match(parts[-1]) and len(parts) > 1:
         folder = "/".join(parts[:-1])  # Альбом/CD1 → Альбом
-    name = meta.album or (os.path.basename(folder) if folder else "Без альбома")
+    name = clean(meta.album or (os.path.basename(folder) if folder else "Без альбома")) or "Без альбома"
     key = hashlib.sha1(f"{lib.id}|{folder.lower()}|{name.lower()}".encode("utf-8", "surrogateescape")).hexdigest()
     album = ctx.albums.get(key)
     if album is None:
@@ -131,7 +156,7 @@ def index_file(
         ctx.touched.add(track.album_id)
     album = album_for(db, lib, rel, meta, ctx)
     ctx.touched.add(album.id)
-    artist_name = meta.artist or meta.album_artist or UNKNOWN_ARTIST
+    artist_name = clean(meta.artist or meta.album_artist, 512).strip() or UNKNOWN_ARTIST
     artist_id = get_or_create_artist(db, artist_name, ctx.artists)
     added = track is None
     if track is None:
@@ -139,24 +164,24 @@ def index_file(
     fname = abs_path.name
     track.album_id = album.id
     track.artist_id = artist_id
-    track.title = (meta.title or os.path.splitext(fname)[0])[:512]
-    track.artist_name = artist_name[:512]
-    track.album_artist_name = meta.album_artist[:512]
+    track.title = clean(meta.title or os.path.splitext(fname)[0], 512) or "Без названия"
+    track.artist_name = clean(artist_name, 512)
+    track.album_artist_name = clean(meta.album_artist, 512)
     track.track_no = meta.track_no or _track_from_name(fname)
     track.disc_no = meta.disc_no or _disc_from_dir(str(abs_path.parent))
     track.year = meta.year
-    track.genre = meta.genre
+    track.genre = clean(meta.genre, 128)
     track.duration = meta.duration
     track.bitrate = meta.bitrate
     track.sample_rate = meta.sample_rate
     track.bit_depth = meta.bit_depth
     track.channels = meta.channels
-    track.codec = meta.codec[:32]
+    track.codec = clean(meta.codec, 32)
     track.suffix = abs_path.suffix.lower().lstrip(".")
     track.size = st.st_size
     track.mtime = st.st_mtime
     track.has_cover = meta.has_cover
-    track.lyrics = meta.lyrics or _sidecar_lyrics(abs_path)
+    track.lyrics = clean(meta.lyrics or _sidecar_lyrics(abs_path), LYRICS_MAX) or None
     if added:
         db.add(track)
     return added, ok
@@ -186,6 +211,7 @@ def reindex_paths(db: Session, lib: Library, rels: list[str], removed: list[str]
     try:
         root = Path(lib.path)
         ctx = IndexContext()
+        need_cleanup = bool(removed)
         for rel in removed or []:
             track = db.scalar(select(Track).where(Track.library_id == lib.id, Track.path_hash == path_hash(rel)))
             if track:
@@ -200,12 +226,14 @@ def reindex_paths(db: Session, lib: Library, rels: list[str], removed: list[str]
             except OSError:
                 continue
             track = db.scalar(select(Track).where(Track.library_id == lib.id, Track.path_hash == path_hash(rel)))
+            need_cleanup = need_cleanup or track is not None  # правка тегов может «осиротить» исполнителя
             index_file(db, lib, root, abs_path, rel, st, track, ctx)
         db.flush()
         for album_id in ctx.touched:
             finalize_album(db, album_id, root, album_id in ctx.new_albums, ctx.artists)
         db.flush()
-        cleanup_orphans(db)
+        if need_cleanup:
+            cleanup_orphans(db)
         update_library_stats(db, lib)
         db.commit()
         return True
@@ -300,15 +328,16 @@ class Scanner:
             with self._lock:
                 if self._pending:
                     jobs.append(self._pending.pop(0))
-        with self._lock:
-            self._state.update(
-                running=False,
-                phase="",
-                library_id=None,
-                library_name=None,
-                finished_at=utcnow(),
-                last_result=totals,
-            )
+                else:
+                    # под тем же замком: запрос, пришедший в эту секунду, не потеряется
+                    self._state.update(
+                        running=False,
+                        phase="",
+                        library_id=None,
+                        library_name=None,
+                        finished_at=utcnow(),
+                        last_result=totals,
+                    )
         self._last_auto = time.monotonic()
         log.info("Сканирование завершено: %s", totals)
 
@@ -339,15 +368,29 @@ class Scanner:
         ctx = IndexContext()
         seen: set[str] = set()
         checked = changed = 0
+        visited: set[tuple[int, int]] = set()  # защита от петель из символических ссылок
+        bad_names: list[str] = []
+        last_commit = time.monotonic()
 
         for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+            try:
+                dst = os.stat(dirpath)
+                if (dst.st_dev, dst.st_ino) in visited:
+                    dirnames[:] = []
+                    continue
+                visited.add((dst.st_dev, dst.st_ino))
+            except OSError:
+                continue
             dirnames[:] = sorted(d for d in dirnames if not SKIP_DIRS.match(d))
             for fname in sorted(filenames):
                 ext = os.path.splitext(fname)[1].lower()
-                if ext not in AUDIO_EXTENSIONS or fname.startswith("._"):
+                if ext not in AUDIO_EXTENSIONS or fname.startswith("."):
                     continue
                 abs_path = Path(dirpath) / fname
                 rel = abs_path.relative_to(root).as_posix()
+                if not decodable(rel):
+                    bad_names.append(rel.encode("utf-8", "backslashreplace").decode())
+                    continue
                 try:
                     st = abs_path.stat()
                 except OSError:
@@ -355,20 +398,32 @@ class Scanner:
                 seen.add(rel)
                 checked += 1
                 old = existing.get(rel)
-                if old and not full and abs(old.mtime - st.st_mtime) < 0.001 and old.size == st.st_size:
+                if old and not full and abs(old.mtime - st.st_mtime) < 0.01 and old.size == st.st_size:
                     if checked % 500 == 0:
                         self._progress(checked=checked)
                     continue
                 track = db.get(Track, old.id) if old else None
-                added, ok = index_file(db, lib, root, abs_path, rel, st, track, ctx)
+                try:
+                    # каждый файл — в своей точке сохранения: один «битый» файл не валит весь скан
+                    with db.begin_nested():
+                        added, ok = index_file(db, lib, root, abs_path, rel, st, track, ctx)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Файл пропущен %s: %s", rel, exc)
+                    result["errors"] += 1
+                    ctx.reset_caches()  # старая запись (если была) остаётся как есть
+                    continue
                 result["added" if added else "updated"] += 1
                 if not ok:
                     result["errors"] += 1
                 changed += 1
-                if changed % BATCH == 0:
+                if changed % BATCH == 0 or time.monotonic() - last_commit > COMMIT_EVERY:
                     db.commit()
+                    last_commit = time.monotonic()
                 if checked % 50 == 0:
                     self._progress(checked=checked, changed=changed)
+        if bad_names:
+            result["errors"] += len(bad_names)
+            log.warning("Пропущено файлов с нечитаемым именем: %d, например: %s", len(bad_names), bad_names[0])
 
         self._progress(checked=checked, changed=changed, phase="Обновление альбомов")
         missing = [row for path, row in existing.items() if path not in seen]
@@ -399,7 +454,11 @@ class Scanner:
 
         update_library_stats(db, lib)
         lib.last_scan_at = utcnow()
-        lib.last_scan_error = None
+        lib.last_scan_error = (
+            f"Пропущено файлов с нечитаемым именем: {len(bad_names)} (например, {bad_names[0][:200]}). Переименуйте их."
+            if bad_names
+            else None
+        )
         db.commit()
         log.info("Папка «%s»: %s", lib.name, result)
         return result
@@ -465,6 +524,8 @@ def finalize_album(db: Session, album_id: int, root: Path, is_new: bool, artist_
     album = db.get(Album, album_id)
     if album is None:
         return
+    fields = ("track_count", "duration", "size", "disc_count", "year", "genre", "artist_name", "artist_id", "quality", "cover")
+    before = tuple(getattr(album, f) for f in fields)
     tracks = list(db.scalars(select(Track).where(Track.album_id == album_id)))
     if not tracks:
         db.delete(album)
@@ -505,7 +566,8 @@ def finalize_album(db: Session, album_id: int, root: Path, is_new: bool, artist_
     if is_new:
         newest = max(t.mtime for t in tracks)
         album.created_at = min(datetime.fromtimestamp(newest, timezone.utc), utcnow())
-    album.updated_at = utcnow()
+    if is_new or tuple(getattr(album, f) for f in fields) != before:
+        album.updated_at = utcnow()  # от него зависит адрес обложки — меняем только при изменениях
 
 
 def cleanup_orphans(db: Session) -> None:

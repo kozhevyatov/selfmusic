@@ -10,8 +10,9 @@ from fastapi.staticfiles import StaticFiles
 from . import db
 from . import scanner as _scanner  # noqa: F401 — регистрирует запуск сканера после подключения БД
 from .config import VERSION, settings
+from .limits import BodyLimitMiddleware
 from .media import ensure_dirs
-from .routers import admin, auth, library, profile, setup, subsonic, uploads
+from .routers import admin, auth, library, profile, setup, shares, subsonic, uploads
 
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
@@ -34,6 +35,7 @@ class ImmutableStatic(StaticFiles):
 
 
 app = FastAPI(title="SelfMusic API", version=VERSION, lifespan=lifespan)
+app.add_middleware(BodyLimitMiddleware)
 
 app.include_router(setup.router)
 app.include_router(auth.router)
@@ -41,6 +43,7 @@ app.include_router(admin.router)
 app.include_router(profile.router)
 app.include_router(library.router)
 app.include_router(uploads.router)
+app.include_router(shares.router)
 app.include_router(subsonic.router)
 
 

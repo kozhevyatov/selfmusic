@@ -8,7 +8,9 @@ import io
 import logging
 import mimetypes
 import os
+import threading
 import uuid
+import warnings
 from pathlib import Path
 
 from fastapi import HTTPException, Request
@@ -21,6 +23,26 @@ from .models import Album, Library, Track
 from .tags import embedded_cover
 
 log = logging.getLogger("uvicorn.error")
+
+# Картинка 20000×20000 весит в PNG пару килобайт, а в памяти — больше гигабайта. Такие не открываем.
+Image.MAX_IMAGE_PIXELS = 40_000_000
+warnings.simplefilter("error", Image.DecompressionBombWarning)
+
+# Не больше двух обложек обрабатываются одновременно (на NAS память и CPU небольшие),
+# и одну и ту же обложку не делаем дважды параллельно.
+_cover_slots = threading.BoundedSemaphore(int(os.environ.get("COVER_WORKERS", "2")))
+_cover_locks: dict[str, threading.Lock] = {}
+_cover_locks_guard = threading.Lock()
+
+# Одновременных перекодирований ffmpeg. Каждый поток слушателя держит свой процесс,
+# поэтому это не очередь, а «предохранитель»: сверх лимита отвечаем 503.
+MAX_TRANSCODES = int(os.environ.get("MAX_TRANSCODES", "12"))
+_transcodes = 0
+_transcodes_guard = threading.Lock()
+
+
+class _CoverReadError(Exception):
+    """Файл временно недоступен (диск засыпал, том отмонтирован) — не запоминаем «нет обложки»."""
 
 MAX_COVER = 1200
 CONTENT_TYPES = {
@@ -82,8 +104,10 @@ def _original_cover(db: Session, album: Album) -> bytes | None:
             track = db.get(Track, int(ref))
             if track:
                 return embedded_cover((root / track.path).resolve())
-    except (OSError, ValueError):
+    except ValueError:
         return None
+    except OSError as exc:
+        raise _CoverReadError from exc
     return None
 
 
@@ -103,12 +127,30 @@ def cover_path(db: Session, album: Album, size: int | None) -> Path | None:
     miss = COVER_CACHE / f"al{album.id}-none-{stamp}"
     if miss.exists():
         return None
-    data = _original_cover(db, album)
+    with _cover_locks_guard:
+        lock = _cover_locks.setdefault(cached.name, threading.Lock())
+    with lock:
+        try:
+            if cached.exists():  # пока ждали, её уже сделал соседний запрос
+                return cached
+            with _cover_slots:
+                return _render_cover(db, album, size, stamp, cached, miss)
+        finally:
+            with _cover_locks_guard:
+                _cover_locks.pop(cached.name, None)
+
+
+def _render_cover(db: Session, album: Album, size: int, stamp: int, cached: Path, miss: Path) -> Path | None:
+    try:
+        data = _original_cover(db, album)
+    except _CoverReadError:
+        return None
     if not data:
         miss.touch()
         return None
     try:
         img = Image.open(io.BytesIO(data))
+        img.draft("RGB", (size * 2, size * 2))  # JPEG: декодируем сразу в уменьшенном виде — в разы быстрее
         img = ImageOps.exif_transpose(img).convert("RGB")
         img.thumbnail((size, size), Image.LANCZOS)
     except Exception:  # noqa: BLE001
@@ -230,15 +272,36 @@ def transcode_response(path: Path, fmt: str, bitrate: int, offset: float = 0) ->
     cmd = [settings.ffmpeg, "-v", "error", "-nostdin"]
     if offset > 0:
         cmd += ["-ss", f"{offset:.2f}"]
-    cmd += ["-i", str(path), "-map", "0:a:0", "-vn", "-c:a", codec, "-b:a", f"{bitrate}k"]
+    cmd += ["-i", str(path), "-map", "0:a:0", "-vn", "-threads", "1", "-c:a", codec, "-b:a", f"{bitrate}k"]
     if fmt == "opus":
         cmd += ["-ar", "48000"]
     cmd += ["-f", container, "pipe:1"]
 
+    global _transcodes
+    with _transcodes_guard:
+        if _transcodes >= MAX_TRANSCODES:
+            raise HTTPException(503, "Сервер занят перекодированием, попробуйте позже", headers={"Retry-After": "10"})
+        _transcodes += 1
+
+    released = False
+
+    def release() -> None:
+        global _transcodes
+        nonlocal released
+        with _transcodes_guard:
+            if not released:
+                released = True
+                _transcodes -= 1
+
     async def stream():
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                preexec_fn=_lower_priority,
+            )
+        except Exception:
+            release()
+            raise
         try:
             assert proc.stdout is not None
             while True:
@@ -253,8 +316,33 @@ def transcode_response(path: Path, fmt: str, bitrate: int, offset: float = 0) ->
                 except ProcessLookupError:
                     pass
             await proc.wait()
+            release()
 
-    return StreamingResponse(stream(), media_type=media_type, headers={"Cache-Control": "no-store", "Accept-Ranges": "none"})
+    return _TranscodeResponse(
+        stream(), release, media_type=media_type, headers={"Cache-Control": "no-store", "Accept-Ranges": "none"}
+    )
+
+
+class _TranscodeResponse(StreamingResponse):
+    """Слот ffmpeg освобождается, даже если клиент ушёл до первого байта (генератор не стартовал)."""
+
+    def __init__(self, content, release, **kwargs) -> None:  # noqa: ANN001
+        super().__init__(content, **kwargs)
+        self._release = release
+
+    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._release()
+
+
+def _lower_priority() -> None:
+    """ffmpeg с пониженным приоритетом: интерфейс и сканер не «тормозят» от перекодирования."""
+    try:
+        os.nice(10)
+    except OSError:
+        pass
 
 
 def stream_track(

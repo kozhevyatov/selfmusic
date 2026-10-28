@@ -19,6 +19,7 @@ export type User = {
   upload_mode: UploadMode;
   upload_quota_mb: number;
   upload_max_files: number;
+  can_share: boolean;
   created_at: string;
   last_seen_at: string | null;
 };
@@ -34,7 +35,7 @@ export type SetupStatus = {
 
 export type RegistrationMode = "open" | "closed";
 export type PublicSettings = { site_name: string; registration_mode: RegistrationMode };
-export type AdminSettings = PublicSettings & { scan_interval: number };
+export type AdminSettings = PublicSettings & { scan_interval: number; public_url: string };
 
 export type DatabaseConfig = {
   type: "sqlite" | "mysql";
@@ -233,6 +234,86 @@ export type AlbumTags = {
   reason: string | null;
   has_cover: boolean;
 };
+
+export type ShareKind = "folder" | "album" | "artist" | "playlist" | "tracks";
+
+export type ShareTarget =
+  | { kind: "folder"; library_id: number; folder: string; label: string }
+  | { kind: "album" | "artist" | "playlist"; item_id: number; label: string }
+  | { kind: "tracks"; track_ids: number[]; label: string };
+
+export type Share = {
+  id: number;
+  token: string;
+  url: string;
+  kind: ShareKind;
+  kind_label: string;
+  target_title: string;
+  target_subtitle: string;
+  title: string;
+  description: string;
+  has_password: boolean;
+  expires_at: string | null;
+  allow_download: boolean;
+  max_views: number | null;
+  views: number;
+  plays: number;
+  downloads: number;
+  last_opened_at: string | null;
+  enabled: boolean;
+  state: "active" | "disabled" | "expired" | "exhausted";
+  track_count: number;
+  cover: string | null;
+  owner: { id: number; name: string };
+  created_at: string;
+};
+
+export type ShareOptions = {
+  title?: string;
+  description?: string;
+  password?: string | null;
+  expires_at?: string | null;
+  clear_expiry?: boolean;
+  allow_download?: boolean;
+  max_views?: number | null;
+  enabled?: boolean;
+};
+
+export type PublicTrack = {
+  id: number;
+  title: string;
+  artist: string;
+  album: string;
+  album_id: number;
+  track_no: number | null;
+  disc_no: number | null;
+  duration: number;
+  quality: string;
+  size: number | null;
+  cover: string | null;
+  has_lyrics: boolean;
+};
+
+export type PublicShare =
+  | { locked: true; kind: ShareKind; kind_label: string; owner: string; site_name: string }
+  | {
+      locked: false;
+      kind: ShareKind;
+      kind_label: string;
+      owner: string;
+      site_name: string;
+      title: string;
+      subtitle: string;
+      description: string;
+      allow_download: boolean;
+      expires_at: string | null;
+      cover: string | null;
+      tracks: PublicTrack[];
+      duration: number;
+      size: number | null;
+    };
+
+export type LibraryDirs = { library: { id: number; name: string }; path: string; dirs: string[]; track_count: number };
 
 export class ApiError extends Error {
   status: number;
@@ -462,6 +543,27 @@ export const api = {
       request<{ ok: true }>(`/api/playlists/${id}/order`, { method: "PUT", body: json({ entry_ids }) }),
   },
 
+  shares: {
+    list: (all = false) => request<Share[]>(`/api/shares${all ? "?all=true" : ""}`),
+    create: (target: ShareTarget, opts: ShareOptions) => {
+      const { label: _label, ...t } = target;
+      void _label;
+      return request<Share>("/api/shares", { method: "POST", body: json({ ...t, ...opts }) });
+    },
+    update: (id: number, opts: ShareOptions) => request<Share>(`/api/shares/${id}`, { method: "PATCH", body: json(opts) }),
+    remove: (id: number) => request<{ ok: true }>(`/api/shares/${id}`, { method: "DELETE" }),
+    dirs: (libraryId: number, path = "") => request<LibraryDirs>(`/api/libraries/${libraryId}/dirs${qs({ path })}`),
+  },
+
+  publicShare: {
+    open: (token: string) => raw<PublicShare>(`/api/s/${token}`),
+    unlock: (token: string, password: string) =>
+      raw<{ ok: true }>(`/api/s/${token}/unlock`, { method: "POST", body: json({ password }) }),
+    play: (token: string, track_id: number) =>
+      raw<{ ok: true }>(`/api/s/${token}/play`, { method: "POST", body: json({ track_id }) }),
+    lyrics: (token: string, id: number) => raw<{ lyrics: string | null }>(`/api/s/${token}/lyrics/${id}`),
+  },
+
   uploads: {
     info: () => request<UploadInfo>("/api/uploads/info"),
     mine: () => request<MyUpload[]>("/api/uploads/mine"),
@@ -507,6 +609,7 @@ export const api = {
       upload_mode: UploadMode;
       upload_quota_mb: number;
       upload_max_files: number;
+      can_share: boolean;
     }) => request<AdminUser>("/api/admin/users", { method: "POST", body: json(data) }),
     updateUser: (id: number, data: Partial<Omit<User, "id" | "created_at" | "last_seen_at" | "stream_quality">>) =>
       request<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body: json(data) }),

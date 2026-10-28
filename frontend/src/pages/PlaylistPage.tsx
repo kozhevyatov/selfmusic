@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { PlayFill } from "@/components/icon";
-import { Ellipsis, Globe, ListEnd, ListMusic, Pencil, Shuffle, Trash } from "@/components/icons";
+import { Ellipsis, Globe, Link as LinkIcon, ListEnd, ListMusic, Pencil, Shuffle, Trash } from "@/components/icons";
+import { useCanShare } from "@/lib/auth";
 import { TrackList } from "@/components/TrackList";
 import { Empty, ErrorBox, PageLoader } from "@/components/ui/misc";
 import { Menu } from "@/components/ui/menu";
@@ -22,6 +23,7 @@ export default function PlaylistPage() {
   const [editing, setEditing] = useState(false);
   const pl = q.data;
   const palette = usePalette(coverUrl(pl?.covers[0], 96), pl?.name ?? "");
+  const canShare = useCanShare();
 
   if (q.isLoading) return <PageLoader />;
   if (q.error || !pl) return <ErrorBox error={q.error} />;
@@ -98,6 +100,9 @@ export default function PlaylistPage() {
           label="Действия с плейлистом"
           items={[
             { label: "Добавить в очередь", icon: <ListEnd />, onSelect: () => queueTracks(pl.tracks, false), disabled: !pl.tracks.length },
+            ...(canShare
+              ? [{ label: "Поделиться ссылкой", icon: <LinkIcon />, onSelect: () => dialogs.share({ kind: "playlist", item_id: pl.id, label: pl.name }) }]
+              : []),
             ...(pl.is_owner
               ? [
                   { label: "Название и доступ", icon: <Pencil />, onSelect: () => setEditing(true) },
@@ -126,7 +131,7 @@ export default function PlaylistPage() {
           }
         />
       ) : (
-        <TrackList tracks={pl.tracks} showCover showAlbum onRemove={pl.is_owner ? removeEntry : undefined} className="-mx-2 sm:-mx-3" />
+        <TrackList tracks={pl.tracks} showCover showAlbum selectable onRemove={pl.is_owner ? removeEntry : undefined} className="-mx-2 sm:-mx-3" />
       )}
       {pl.is_owner && <PlaylistForm open={editing} onClose={() => setEditing(false)} initial={pl} />}
     </div>

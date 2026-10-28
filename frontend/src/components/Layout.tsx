@@ -14,6 +14,7 @@ import {
   Heart,
   House,
   Library,
+  Link as LinkIcon,
   ListMusic,
   LogOut,
   MicVocal,
@@ -122,6 +123,19 @@ function Sidebar() {
             </Link>
           );
         })}
+        {user && (user.is_admin || user.can_share) && (
+          <Link
+            to="/shares"
+            aria-current={isActive(pathname, "/shares") ? "page" : undefined}
+            className={cn(
+              "flex items-center gap-3.5 rounded-xl px-3 py-2.5 text-[15px] font-bold transition",
+              isActive(pathname, "/shares") ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2/60 hover:text-fg",
+            )}
+          >
+            <LinkIcon className={cn("size-5", isActive(pathname, "/shares") && "text-accent-ink")} />
+            Ссылки
+          </Link>
+        )}
         {user && (user.is_admin || user.upload_mode !== "none") && (
           <Link
             to="/upload"
@@ -187,7 +201,7 @@ function MobileHeader() {
 
 function TabBar() {
   const { pathname } = useLocation();
-  const libraryPaths = ["/library", "/albums", "/artists", "/favorites", "/folders", "/upload"];
+  const libraryPaths = ["/library", "/albums", "/artists", "/favorites", "/folders", "/upload", "/shares"];
   return (
     <nav
       aria-label="Разделы"
