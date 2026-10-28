@@ -4,6 +4,7 @@
  * сервер ставит отдельную media-cookie, поэтому <audio> и <img> работают без заголовков.
  * При 401 клиент один раз обновляет токен и повторяет запрос.
  */
+import { setOffline, whenBackOnline } from "./network";
 
 export type Quality = "original" | "320" | "192" | "128";
 export type UploadMode = "none" | "own" | "libraries";
@@ -386,12 +387,35 @@ export function onAuthChange(fn: (user: User | null) => void) {
   };
 }
 
+const USER_KEY = "sm-user";
+
+/** Последний вошедший пользователь — чтобы без связи открыть приложение со скачанной музыкой */
+function rememberUser(user: User | null) {
+  try {
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+    else localStorage.removeItem(USER_KEY);
+  } catch {
+    /* приватный режим */
+  }
+}
+
+export function cachedUser(): User | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    return raw ? (JSON.parse(raw) as User) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function setSession(data: TokenResponse | null) {
   accessToken = data?.access_token ?? null;
+  rememberUser(data?.user ?? null);
   listeners.forEach((fn) => fn(data?.user ?? null));
 }
 
 export function updateCurrentUser(user: User) {
+  rememberUser(user);
   listeners.forEach((fn) => fn(user));
 }
 
@@ -416,7 +440,19 @@ async function raw<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !(init.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
-  const res = await fetch(path, { ...init, headers, credentials: "include" });
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers, credentials: "include" });
+  } catch {
+    setOffline(true);
+    throw new ApiError(0, "Нет связи с сервером");
+  }
+  // 502–504 отдаёт обратный прокси, когда сам сервер недоступен
+  if (res.status >= 502 && res.status <= 504) {
+    setOffline(true);
+    throw new ApiError(res.status, "Сервер недоступен");
+  }
+  setOffline(false);
   const text = await res.text();
   let body: unknown = null;
   try {
@@ -428,6 +464,10 @@ async function raw<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+whenBackOnline(() => {
+  if (!accessToken && cachedUser()) void refreshSession();
+});
+
 export async function refreshSession(): Promise<TokenResponse | null> {
   if (!refreshPromise) {
     refreshPromise = raw<TokenResponse>("/api/auth/refresh", { method: "POST", body: "{}" })
@@ -435,7 +475,15 @@ export async function refreshSession(): Promise<TokenResponse | null> {
         setSession(data);
         return data;
       })
-      .catch(() => {
+      .catch((err) => {
+        // нет связи — не выходим из аккаунта: открываем приложение со скачанной музыкой
+        if (err instanceof ApiError && (err.status === 0 || err.status >= 502)) {
+          const user = cachedUser();
+          if (user) {
+            listeners.forEach((fn) => fn(user));
+            return null;
+          }
+        }
         setSession(null);
         return null;
       })

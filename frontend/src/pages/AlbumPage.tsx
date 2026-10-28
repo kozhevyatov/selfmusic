@@ -1,3 +1,4 @@
+import { DownloadButton } from "@/components/DownloadButton";
 import { AlbumCard, CardGrid } from "@/components/Cards";
 import { Cover } from "@/components/Cover";
 import { HeartFill, PlayFill } from "@/components/icon";
@@ -88,6 +89,15 @@ export default function AlbumPage() {
         >
           {a.starred ? <HeartFill className="size-5" /> : <Heart className="size-5" />}
         </button>
+        <DownloadButton
+          kind="album"
+          id={a.id}
+          title={a.name}
+          subtitle={a.artist}
+          cover={a.cover}
+          link={`/albums/${a.id}`}
+          tracks={a.tracks}
+        />
         <button onClick={() => dialogs.addToPlaylist(a.tracks)} className="hidden h-12 items-center gap-2 rounded-full border px-5 text-sm font-bold hover:bg-surface-2 sm:flex">
           <ListPlus className="size-[18px]" /> В плейлист
         </button>

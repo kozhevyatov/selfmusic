@@ -1,3 +1,4 @@
+import { DownloadButton } from "@/components/DownloadButton";
 import { useState } from "react";
 import { PlayFill } from "@/components/icon";
 import { Ellipsis, Globe, Link as LinkIcon, ListEnd, ListMusic, Pencil, Shuffle, Trash } from "@/components/icons";
@@ -96,6 +97,15 @@ export default function PlaylistPage() {
         >
           <Shuffle className="size-5" />
         </button>
+        <DownloadButton
+          kind="playlist"
+          id={pl.id}
+          title={pl.name}
+          subtitle={`${pl.tracks.length} тр.`}
+          cover={pl.covers[0] ?? null}
+          link={`/playlists/${pl.id}`}
+          tracks={pl.tracks}
+        />
         <Menu
           label="Действия с плейлистом"
           items={[

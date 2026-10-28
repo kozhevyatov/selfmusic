@@ -1,3 +1,4 @@
+import { DownloadButton } from "@/components/DownloadButton";
 import { useState } from "react";
 import { PlayFill } from "@/components/icon";
 import { Link as LinkIcon, ListPlus, RefreshCw, Shuffle } from "@/components/icons";
@@ -110,6 +111,15 @@ export default function MixPage() {
         >
           <RefreshCw className={cn("size-4", busy && "animate-spin")} /> Обновить
         </button>
+        <DownloadButton
+          kind="mix"
+          id={m.key}
+          title={m.title}
+          subtitle="Подборка дня"
+          cover={m.covers[0] ?? null}
+          link={`/mixes/${m.key}`}
+          tracks={m.tracks}
+        />
         <button
           onClick={save}
           disabled={!m.tracks.length}

@@ -26,6 +26,8 @@ import FoldersPage from "@/pages/FoldersPage";
 import FolderPage from "@/pages/FolderPage";
 import MixesPage from "@/pages/MixesPage";
 import MixPage from "@/pages/MixPage";
+import OfflinePage from "@/pages/OfflinePage";
+import { useOffline } from "@/lib/network";
 import UploadPage from "@/pages/UploadPage";
 import ProfilePage from "@/pages/ProfilePage";
 import AdminPage from "@/pages/AdminPage";
@@ -50,14 +52,17 @@ export default function App() {
   const { ready, user } = useAuth();
   const { pathname } = useLocation();
   const status = useQuery(["setup-status"], api.setup.status, { staleTime: 5 * 60_000 });
+  const offline = useOffline();
 
   // Публичная страница ссылки — без входа и без проверки настройки
   if (pathname.startsWith("/s/")) return <Routes routes={[{ path: "/s/:token", element: <SharePage /> }]} />;
 
   if (status.isLoading || !ready) return <Splash />;
-  if (status.error) return <Splash error="Не удалось связаться с сервером. Проверьте, что контейнер запущен." />;
+  // без связи, но вход уже был — открываем приложение со скачанной музыкой
+  const offlineMode = offline && Boolean(user);
+  if (status.error && !offlineMode) return <Splash error="Не удалось связаться с сервером. Проверьте, что контейнер запущен." />;
 
-  const setupDone = status.data?.setup_complete;
+  const setupDone = offlineMode ? true : status.data?.setup_complete;
   if (!setupDone && pathname !== "/setup") return <Navigate to="/setup" />;
 
   if (PUBLIC.includes(pathname)) {
@@ -99,6 +104,7 @@ export default function App() {
           { path: "/folders/:id", element: <FolderPage /> },
           { path: "/upload", element: <UploadPage /> },
           { path: "/shares", element: <SharesPage /> },
+          { path: "/offline", element: <OfflinePage /> },
           { path: "/profile", element: <ProfilePage /> },
           { path: "/admin", element: <AdminOnly><AdminPage /></AdminOnly> },
           { path: "*", element: <Navigate to="/" /> },

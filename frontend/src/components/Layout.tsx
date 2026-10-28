@@ -9,7 +9,9 @@ import { cn } from "@/lib/utils";
 import { Ambient } from "./Ambient";
 import { Avatar, Cover } from "./Cover";
 import {
+  CircleCheck,
   Disc3,
+  WifiOff,
   Folder,
   Heart,
   House,
@@ -30,6 +32,8 @@ import {
 } from "./icons";
 import { BalalaikaMark, Brand } from "./Logo";
 import { MiniPlayer, NowPlaying, PlayerBar } from "./Player";
+import OfflinePage from "@/pages/OfflinePage";
+import { useOffline } from "@/lib/network";
 import { Menu } from "./ui/menu";
 
 const NAV = [
@@ -41,6 +45,7 @@ const NAV = [
   { to: "/playlists", label: "Плейлисты", icon: ListMusic },
   { to: "/favorites", label: "Избранное", icon: Heart },
   { to: "/folders", label: "Папки", icon: Folder },
+  { to: "/offline", label: "Скачанное", icon: CircleCheck },
 ];
 
 const TABS = [
@@ -203,7 +208,7 @@ function MobileHeader() {
 
 function TabBar() {
   const { pathname } = useLocation();
-  const libraryPaths = ["/library", "/mixes", "/albums", "/artists", "/favorites", "/folders", "/upload", "/shares"];
+  const libraryPaths = ["/library", "/mixes", "/offline", "/albums", "/artists", "/favorites", "/folders", "/upload", "/shares"];
   return (
     <nav
       aria-label="Разделы"
@@ -227,12 +232,25 @@ function TabBar() {
   );
 }
 
+/** Без связи эти страницы работают (остальные заменяются «Скачанным») */
+const OFFLINE_OK = ["/offline", "/profile"];
+
+function OfflineBanner() {
+  return (
+    <div className="mb-5 flex items-center gap-3 rounded-2xl border border-accent/30 bg-accent/10 px-4 py-3 text-sm">
+      <WifiOff className="size-5 shrink-0 text-accent-ink" />
+      <span className="flex-1">Нет связи с сервером. Играет скачанная музыка, остальное появится, когда связь вернётся.</span>
+    </div>
+  );
+}
+
 export function Layout({ children }: { children: ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const track = useCurrentTrack();
   const open = useCallback(() => setExpanded(true), []);
   const close = useCallback(() => setExpanded(false), []);
   const { pathname } = useLocation();
+  const offline = useOffline();
 
   useEffect(() => setExpanded(false), [pathname]);
 
@@ -264,7 +282,8 @@ export function Layout({ children }: { children: ReactNode }) {
             track ? "pb-[170px] lg:pb-[130px]" : "pb-[110px] lg:pb-12",
           )}
         >
-          {children}
+          {offline && <OfflineBanner />}
+          {offline && !OFFLINE_OK.some((p) => isActive(pathname, p)) ? <OfflinePage /> : children}
         </main>
       </div>
       <PlayerBar onExpand={open} />

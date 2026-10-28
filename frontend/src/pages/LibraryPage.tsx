@@ -1,4 +1,4 @@
-import { ChevronRight, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Sparkles, Upload } from "@/components/icons";
+import { ChevronRight, CircleCheck, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Sparkles, Upload } from "@/components/icons";
 import { PageHeader } from "@/components/Section";
 import { useAuth } from "@/lib/auth";
 import { Link } from "@/lib/router";
@@ -13,6 +13,7 @@ export default function LibraryPage() {
     { to: "/favorites", label: "Избранное", icon: Heart },
     { to: "/playlists", label: "Плейлисты", icon: ListMusic },
     { to: "/folders", label: "Папки", icon: Folder },
+    { to: "/offline", label: "Скачанное", icon: CircleCheck },
     ...(user?.is_admin || user?.can_share ? [{ to: "/shares", label: "Общие ссылки", icon: LinkIcon }] : []),
     ...(user?.is_admin || user?.upload_mode !== "none" ? [{ to: "/upload", label: "Загрузить музыку", icon: Upload }] : []),
   ];
