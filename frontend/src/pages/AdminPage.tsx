@@ -20,7 +20,8 @@ import { Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge, Card, ErrorBox, PageLoader, Progress } from "@/components/ui/misc";
 import { Segmented, Switch } from "@/components/ui/switch";
-import { api, type AdminLibrary, type AdminUser, type UploadMode } from "@/lib/api";
+import { api, type AdminLibrary, type AdminUser, type DuplicatesResult, type UploadMode } from "@/lib/api";
+import { Link } from "@/lib/router";
 import { useAuth } from "@/lib/auth";
 import { dialogs } from "@/lib/dialogs";
 import { formatDate, formatDuration, formatSize } from "@/lib/format";
@@ -29,7 +30,7 @@ import { setSearchParam, useSearchParams } from "@/lib/router";
 import { toast } from "@/lib/toast";
 import { cn, countLabel } from "@/lib/utils";
 
-type Tab = "users" | "libraries" | "general";
+type Tab = "users" | "libraries" | "duplicates" | "general";
 
 // ---------------- общие ----------------
 
@@ -862,25 +863,181 @@ function UsersTab() {
   );
 }
 
+// ---------------- дубликаты ----------------
+
+function DuplicatesTab() {
+  const [strict, setStrict] = useState(true);
+  const q = useQuery(["admin", "duplicates", strict], () => api.admin.duplicates(strict), { staleTime: 0 });
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setPicked(new Set()), [strict]);
+
+  const data: DuplicatesResult | undefined = q.data;
+  const toggle = (id: number) =>
+    setPicked((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const pickAllWorse = () => {
+    const n = new Set<number>();
+    data?.groups.forEach((g) => g.tracks.forEach((t) => !t.best && t.can_delete && n.add(t.id)));
+    setPicked(n);
+  };
+  const pickedSize = data?.groups.flatMap((g) => g.tracks).filter((t) => picked.has(t.id)).reduce((a, t) => a + t.size, 0) ?? 0;
+
+  const remove = async () => {
+    const ok = await dialogs.confirm({
+      title: `Удалить ${countLabel(picked.size, "файл", "файла", "файлов")}?`,
+      text: `Файлы будут удалены с диска (${formatSize(pickedSize)}). Это нельзя отменить.`,
+      action: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    let failed = 0;
+    for (const id of picked) {
+      try {
+        await api.uploads.deleteTrack(id);
+      } catch {
+        failed++;
+      }
+    }
+    setBusy(false);
+    setPicked(new Set());
+    if (failed) toast.error(`Не удалось удалить ${countLabel(failed, "файл", "файла", "файлов")}`);
+    else toast.success("Удалено");
+    invalidate(["admin", "duplicates"], ["home"], ["albums"]);
+  };
+
+  const ignore = async (key: string) => {
+    await api.admin.ignoreDuplicate(key);
+    invalidate(["admin", "duplicates"]);
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
+      <Card className="flex flex-col gap-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-[17px] font-extrabold">Поиск дубликатов</h2>
+            <p className="text-sm text-muted">
+              Одинаковые артист и название трека. Лучшая копия (без потерь, выше битрейт) отмечена — её стоит оставить.
+            </p>
+          </div>
+          <Segmented<"strict" | "loose">
+            label="Режим"
+            value={strict ? "strict" : "loose"}
+            onChange={(v) => setStrict(v === "strict")}
+            options={[
+              { value: "strict", label: "Строго" },
+              { value: "loose", label: "Мягко" },
+            ]}
+          />
+        </div>
+        <p className="text-[13px] text-faint">
+          «Строго» — длительность совпадает до 3 секунд. «Мягко» — найдёт и разные версии (live, ремастер), проверяйте внимательнее.
+        </p>
+        {data && data.count > 0 && (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm">
+              {countLabel(data.count, "группа", "группы", "групп")} · можно освободить до <b>{formatSize(data.reclaimable)}</b>
+            </span>
+            <Button variant="secondary" size="sm" onClick={pickAllWorse}>
+              Отметить все худшие копии
+            </Button>
+            {picked.size > 0 && (
+              <Button variant="danger" size="sm" onClick={remove} disabled={busy}>
+                {busy ? <LoaderCircle className="size-4 animate-spin" /> : <Trash className="size-4" />}
+                Удалить {picked.size} ({formatSize(pickedSize)})
+              </Button>
+            )}
+          </div>
+        )}
+      </Card>
+
+      {q.isLoading ? (
+        <PageLoader />
+      ) : q.error ? (
+        <ErrorBox error={q.error} />
+      ) : !data?.groups.length ? (
+        <Card className="p-8 text-center text-muted">Дубликатов не найдено 🎉</Card>
+      ) : (
+        data.groups.map((g) => (
+          <Card key={g.key} className="flex flex-col gap-1 p-4">
+            <div className="flex items-start justify-between gap-3 px-1 pb-2">
+              <div className="min-w-0">
+                <div className="truncate font-bold">{g.title}</div>
+                <div className="truncate text-sm text-muted">{g.artist}</div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => ignore(g.key)}>
+                Не дубликат
+              </Button>
+            </div>
+            {g.tracks.map((t) => (
+              <label
+                key={t.id}
+                className={cn(
+                  "flex items-center gap-3 rounded-xl px-2 py-2",
+                  t.can_delete ? "cursor-pointer hover:bg-surface-2/60" : "opacity-80",
+                  picked.has(t.id) && "bg-danger/10",
+                )}
+              >
+                <input
+                  type="checkbox"
+                  className="size-4 shrink-0 accent-[var(--color-danger)]"
+                  disabled={!t.can_delete}
+                  checked={picked.has(t.id)}
+                  onChange={() => toggle(t.id)}
+                  aria-label="Удалить эту копию"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-2 text-[14px]">
+                    <b>{t.quality}</b>
+                    <span className="text-faint">{formatDuration(t.duration)} · {formatSize(t.size)}</span>
+                    {t.best && <Badge>лучшая</Badge>}
+                    {!t.can_delete && <span className="text-[12px] text-faint">папка только для чтения</span>}
+                  </span>
+                  <span className="block truncate text-[12px] text-faint" title={t.path}>
+                    <Link to={`/albums/${t.album_id}`} className="hover:underline">
+                      {t.album}
+                    </Link>{" "}
+                    · {t.library} · {t.path}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </Card>
+        ))
+      )}
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const params = useSearchParams();
   const tab = (params.get("tab") as Tab) || "users";
   return (
     <div className="flex flex-col gap-7">
       <PageHeader title="Управление" />
+      <div className="scrollbar-none -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
       <Segmented<Tab>
         label="Раздел"
         value={tab}
         onChange={(t) => setSearchParam("tab", t)}
-        className="max-w-lg"
+        className="w-max min-w-full flex-nowrap sm:max-w-xl sm:min-w-0"
         options={[
           { value: "users", label: "Пользователи" },
           { value: "libraries", label: "Папки" },
+          { value: "duplicates", label: "Дубликаты" },
           { value: "general", label: "Общие" },
         ]}
       />
+      </div>
       {tab === "users" && <UsersTab />}
       {tab === "libraries" && <LibrariesTab />}
+      {tab === "duplicates" && <DuplicatesTab />}
       {tab === "general" && <GeneralTab />}
     </div>
   );

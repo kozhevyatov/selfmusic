@@ -4,15 +4,19 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field, ValidationError
 from fastapi.responses import Response
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
+from .. import smart
 from ..access import allowed_library_ids, can_edit_track, can_write
 from ..db import get_db
 from ..media import cover_path, download_name, file_response, image_response, content_type, stream_track, track_file
-from ..models import Album, Artist, Library, Play, Playlist, PlaylistEntry, Star, Track, Upload, User
+from ..models import Album, Artist, Library, Play, Playlist, PlaylistEntry, PlaylistMember, Star, Track, Upload, User
 from ..queries import (
     album_list_query,
     album_tracks,
@@ -491,8 +495,12 @@ def _playlist_cover_tracks(db: Session, playlist_id: int, lib_ids: list[int]) ->
         .order_by(PlaylistEntry.position)
         .limit(40)
     ).scalars()
+    return _covers_of(rows.unique())
+
+
+def _covers_of(albums) -> list[str]:  # noqa: ANN001
     covers: list[str] = []
-    for album in rows.unique():
+    for album in albums:
         url = cover_url(album)
         if url and url not in covers:
             covers.append(url)
@@ -501,22 +509,50 @@ def _playlist_cover_tracks(db: Session, playlist_id: int, lib_ids: list[int]) ->
     return covers
 
 
-def _playlist_summary(db: Session, pl: Playlist, user: User, lib_ids: list[int]) -> dict:
-    stats = db.execute(
-        select(func.count(Track.id), func.coalesce(func.sum(Track.duration), 0))
-        .join(PlaylistEntry, PlaylistEntry.track_id == Track.id)
-        .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(lib_ids or [-1]))
-    ).one()
+def _user_brief(u: User) -> dict:
+    return {"id": u.id, "name": u.display_name or u.username, "avatar": u.avatar}
+
+
+def _members(db: Session, pl: Playlist) -> list[User]:
+    return list(db.scalars(select(User).join(PlaylistMember, PlaylistMember.user_id == User.id).where(PlaylistMember.playlist_id == pl.id)))
+
+
+def _can_edit(db: Session, pl: Playlist, user: User) -> bool:
+    """Можно ли менять состав треков (у умного плейлиста — нельзя никому: он собирается сам)."""
+    if pl.rules:
+        return False
+    return pl.owner_id == user.id or db.get(PlaylistMember, (pl.id, user.id)) is not None
+
+
+def _playlist_summary(db: Session, pl: Playlist, user: User, lib_ids: list[int], smart_tracks: list[Track] | None = None) -> dict:
+    rules = smart.parse_rules(pl.rules)
+    if rules is not None:
+        tracks = smart_tracks if smart_tracks is not None else smart.evaluate(db, user, rules)
+        count, duration = len(tracks), sum(t.duration or 0 for t in tracks)
+        covers = _covers_of(t.album for t in tracks[:40] if t.album)
+    else:
+        stats = db.execute(
+            select(func.count(Track.id), func.coalesce(func.sum(Track.duration), 0))
+            .join(PlaylistEntry, PlaylistEntry.track_id == Track.id)
+            .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(lib_ids or [-1]))
+        ).one()
+        count, duration = stats[0], stats[1]
+        covers = _playlist_cover_tracks(db, pl.id, lib_ids)
+    members = _members(db, pl)
     return {
         "id": pl.id,
         "name": pl.name,
         "comment": pl.comment,
         "is_public": pl.is_public,
-        "owner": {"id": pl.owner_id, "name": pl.owner.display_name or pl.owner.username},
+        "owner": {"id": pl.owner_id, "name": pl.owner.display_name or pl.owner.username, "avatar": pl.owner.avatar},
         "is_owner": pl.owner_id == user.id,
-        "track_count": stats[0],
-        "duration": int(stats[1]),
-        "covers": _playlist_cover_tracks(db, pl.id, lib_ids),
+        "can_edit": _can_edit(db, pl, user),
+        "smart": rules is not None,
+        "rules": rules.model_dump() if rules is not None else None,
+        "members": [_user_brief(m) for m in members],
+        "track_count": count,
+        "duration": int(duration),
+        "covers": covers,
         "created_at": pl.created_at,
         "updated_at": pl.updated_at,
     }
@@ -524,10 +560,11 @@ def _playlist_summary(db: Session, pl: Playlist, user: User, lib_ids: list[int])
 
 def _get_playlist(db: Session, user: User, playlist_id: int, write: bool = False) -> Playlist:
     pl = db.get(Playlist, playlist_id)
-    if not pl or (pl.owner_id != user.id and not pl.is_public):
+    member = pl is not None and db.get(PlaylistMember, (pl.id, user.id)) is not None
+    if not pl or (pl.owner_id != user.id and not pl.is_public and not member):
         raise HTTPException(404, "Плейлист не найден")
-    if write and pl.owner_id != user.id:
-        raise HTTPException(403, "Это чужой плейлист")
+    if write and not _can_edit(db, pl, user):
+        raise HTTPException(403, "Умный плейлист собирается сам" if pl.rules else "Это чужой плейлист")
     return pl
 
 
@@ -539,18 +576,28 @@ def _append_tracks(db: Session, user: User, pl: Playlist, track_ids: list[int]) 
     for tid in track_ids:
         if tid in valid:
             pos += 1
-            db.add(PlaylistEntry(playlist_id=pl.id, track_id=tid, position=pos))
+            db.add(PlaylistEntry(playlist_id=pl.id, track_id=tid, position=pos, added_by=user.id))
             added += 1
     pl.updated_at = datetime.now(timezone.utc)
     return added
 
 
+def _rules_json(raw: dict | None) -> str | None:
+    if raw is None:
+        return None
+    try:
+        return json.dumps(smart.Rules.model_validate(raw).model_dump(), ensure_ascii=False)
+    except ValidationError as exc:
+        raise HTTPException(422, f"Неверные правила: {exc.errors()[0].get('msg')}")
+
+
 @router.get("/playlists")
 def list_playlists(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
     ids = _libs(db, user)
+    mine = select(PlaylistMember.playlist_id).where(PlaylistMember.user_id == user.id)
     pls = db.scalars(
         select(Playlist)
-        .where((Playlist.owner_id == user.id) | Playlist.is_public.is_(True))
+        .where((Playlist.owner_id == user.id) | Playlist.is_public.is_(True) | Playlist.id.in_(mine))
         .order_by(desc(Playlist.owner_id == user.id), desc(Playlist.updated_at))
     )
     return [_playlist_summary(db, pl, user, ids) for pl in pls]
@@ -558,30 +605,54 @@ def list_playlists(db: Session = Depends(get_db), user: User = Depends(get_curre
 
 @router.post("/playlists")
 def create_playlist(data: PlaylistCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    pl = Playlist(owner_id=user.id, name=data.name.strip(), comment=data.comment, is_public=data.is_public)
+    pl = Playlist(owner_id=user.id, name=data.name.strip(), comment=data.comment, is_public=data.is_public, rules=_rules_json(data.rules))
     db.add(pl)
     db.flush()
-    if data.track_ids:
+    if data.track_ids and not pl.rules:
         _append_tracks(db, user, pl, data.track_ids)
     db.commit()
     db.refresh(pl)
     return _playlist_summary(db, pl, user, _libs(db, user))
 
 
+@router.post("/playlists/preview")
+def preview_rules(data: dict, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    """Предпросмотр правил в редакторе: сколько треков и первые из них."""
+    try:
+        rules = smart.Rules.model_validate(data)
+    except ValidationError as exc:
+        raise HTTPException(422, f"Неверные правила: {exc.errors()[0].get('msg')}")
+    tracks = smart.evaluate(db, user, rules)
+    return {
+        "count": len(tracks),
+        "duration": int(sum(t.duration or 0 for t in tracks)),
+        "tracks": tracks_out(db, user.id, tracks[:30]),
+    }
+
+
 @router.get("/playlists/{playlist_id}")
 def get_playlist(playlist_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     pl = _get_playlist(db, user, playlist_id)
     ids = _libs(db, user)
+    rules = smart.parse_rules(pl.rules)
+    if rules is not None:
+        tracks = smart.evaluate(db, user, rules)
+        return {**_playlist_summary(db, pl, user, ids, tracks), "tracks": tracks_out(db, user.id, tracks)}
     rows = db.execute(
-        select(PlaylistEntry.id, Track)
+        select(PlaylistEntry.id, PlaylistEntry.added_by, Track)
         .join(Track, Track.id == PlaylistEntry.track_id)
         .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(ids or [-1]))
         .order_by(PlaylistEntry.position, PlaylistEntry.id)
     ).all()
-    starred = starred_ids(db, user.id, "track", (t.id for _, t in rows))
+    starred = starred_ids(db, user.id, "track", (t.id for _, _, t in rows))
+    summary = _playlist_summary(db, pl, user, ids)
+    people = {}
+    if summary["members"]:
+        who = {a for _, a, _ in rows if a}
+        people = {u.id: _user_brief(u) for u in db.scalars(select(User).where(User.id.in_(who or [-1])))}
     return {
-        **_playlist_summary(db, pl, user, ids),
-        "tracks": [{**track_out(t, starred), "entry_id": eid} for eid, t in rows],
+        **summary,
+        "tracks": [{**track_out(t, starred), "entry_id": eid, "added_by": people.get(by)} for eid, by, t in rows],
     }
 
 
@@ -589,21 +660,62 @@ def get_playlist(playlist_id: int, db: Session = Depends(get_db), user: User = D
 def update_playlist(
     playlist_id: int, data: PlaylistUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> dict:
-    pl = _get_playlist(db, user, playlist_id, write=True)
+    pl = _get_playlist(db, user, playlist_id)
+    if pl.owner_id != user.id:
+        raise HTTPException(403, "Название и правила меняет владелец плейлиста")
     if data.name is not None:
         pl.name = data.name.strip()
     if data.comment is not None:
         pl.comment = data.comment
     if data.is_public is not None:
         pl.is_public = data.is_public
+    if data.rules is not None and pl.rules:
+        pl.rules = _rules_json(data.rules)
     pl.updated_at = datetime.now(timezone.utc)
     db.commit()
     return _playlist_summary(db, pl, user, _libs(db, user))
 
 
+class MembersIn(BaseModel):
+    user_ids: list[int] = Field(default_factory=list, max_length=100)
+
+
+@router.put("/playlists/{playlist_id}/members")
+def set_members(playlist_id: int, data: MembersIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    """Соавторы плейлиста (меняет только владелец)."""
+    pl = _get_playlist(db, user, playlist_id)
+    if pl.owner_id != user.id:
+        raise HTTPException(403, "Соавторов приглашает владелец плейлиста")
+    if pl.rules:
+        raise HTTPException(400, "Умный плейлист собирается сам — соавторы ему не нужны")
+    wanted = set(db.scalars(select(User.id).where(User.id.in_(data.user_ids or [-1]), User.is_active.is_(True), User.id != user.id)))
+    db.execute(delete(PlaylistMember).where(PlaylistMember.playlist_id == pl.id, PlaylistMember.user_id.not_in(wanted or [-1])))
+    have = set(db.scalars(select(PlaylistMember.user_id).where(PlaylistMember.playlist_id == pl.id)))
+    for uid in wanted - have:
+        db.add(PlaylistMember(playlist_id=pl.id, user_id=uid))
+    pl.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return _playlist_summary(db, pl, user, _libs(db, user))
+
+
+@router.post("/playlists/{playlist_id}/leave")
+def leave_playlist(playlist_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    db.execute(delete(PlaylistMember).where(PlaylistMember.playlist_id == playlist_id, PlaylistMember.user_id == user.id))
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/users/directory")
+def users_directory(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
+    """Кого можно пригласить в совместный плейлист."""
+    return [_user_brief(u) for u in db.scalars(select(User).where(User.is_active.is_(True), User.id != user.id).order_by(User.display_name, User.username))]
+
+
 @router.delete("/playlists/{playlist_id}")
 def delete_playlist(playlist_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    pl = _get_playlist(db, user, playlist_id, write=True)
+    pl = _get_playlist(db, user, playlist_id)
+    if pl.owner_id != user.id:
+        raise HTTPException(403, "Удалить может только владелец")
     db.delete(pl)
     db.commit()
     return {"ok": True}

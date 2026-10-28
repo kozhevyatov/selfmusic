@@ -178,12 +178,15 @@ class PlaylistCreate(BaseModel):
     comment: str = Field(default="", max_length=2000)
     is_public: bool = False
     track_ids: list[int] = []
+    # умный плейлист: правила вместо треков (см. app/smart.py)
+    rules: dict | None = None
 
 
 class PlaylistUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     comment: str | None = Field(default=None, max_length=2000)
     is_public: bool | None = None
+    rules: dict | None = None
 
 
 class PlaylistTracks(BaseModel):

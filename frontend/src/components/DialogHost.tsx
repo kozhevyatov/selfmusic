@@ -18,7 +18,7 @@ function PlaylistPicker({ tracks }: { tracks: Track[] }) {
   const playlists = useQuery(["playlists"], api.playlists.list);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState<number | "new" | null>(null);
-  const mine = (playlists.data ?? []).filter((p) => p.is_owner);
+  const mine = (playlists.data ?? []).filter((p) => p.can_edit); // свои и совместные; умные собираются сами
   const ids = tracks.map((t) => t.id);
 
   const add = async (id: number, title: string) => {

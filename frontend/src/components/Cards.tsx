@@ -65,7 +65,7 @@ export function ArtistCard({ artist }: { artist: Artist }) {
 export function CardGrid({ children, row = false, artists = false }: { children: ReactNode; row?: boolean; artists?: boolean }) {
   if (row)
     return (
-      <div className="scrollbar-none -mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-1 sm:-mx-0 sm:grid sm:overflow-visible sm:px-0 sm:[grid-template-columns:repeat(auto-fill,minmax(168px,1fr))] sm:gap-6">
+      <div className="scrollbar-none -mx-4 flex snap-x scroll-px-4 gap-4 overflow-x-auto px-4 pb-1 sm:-mx-0 sm:grid sm:overflow-visible sm:px-0 sm:[grid-template-columns:repeat(auto-fill,minmax(168px,1fr))] sm:gap-6">
         {Array.isArray(children)
           ? children.map((c, i) => (
               <div key={i} className={cn("shrink-0 snap-start sm:w-auto", artists ? "w-32" : "w-40")}>

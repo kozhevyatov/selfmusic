@@ -75,6 +75,8 @@ export type Track = {
   starred: boolean;
   can_delete?: boolean;
   entry_id?: number;
+  /** кто добавил трек (в совместном плейлисте) */
+  added_by?: UserBrief | null;
   played_at?: string;
 };
 
@@ -132,13 +134,22 @@ export type MyLibrary = {
   last_scan_at: string | null;
 };
 
+export type UserBrief = { id: number; name: string; avatar: string | null };
+export type SmartRule = { field: string; op: string; value: string | number | number[] | null };
+export type SmartRules = { match: "all" | "any"; rules: SmartRule[]; sort: string; limit: number };
+
 export type Playlist = {
   id: number;
   name: string;
   comment: string;
   is_public: boolean;
-  owner: { id: number; name: string };
+  owner: UserBrief;
   is_owner: boolean;
+  /** можно менять состав треков (владелец или соавтор; у умного — никто) */
+  can_edit: boolean;
+  smart: boolean;
+  rules: SmartRules | null;
+  members: UserBrief[];
   track_count: number;
   duration: number;
   covers: string[];
@@ -340,6 +351,25 @@ export type MixesOverview = {
   groups: { key: string; title: string; items: MixCard[] }[];
   analysis_ready: boolean;
 };
+export type DuplicateTrack = {
+  id: number;
+  title: string;
+  path: string;
+  library: string;
+  album: string;
+  album_id: number;
+  quality: string;
+  size: number;
+  duration: number;
+  best: boolean;
+  can_delete: boolean;
+};
+export type DuplicatesResult = {
+  count: number;
+  reclaimable: number;
+  groups: { key: string; title: string; artist: string; tracks: DuplicateTrack[] }[];
+};
+
 export type AnalysisStatus = {
   running: boolean;
   current: string | null;
@@ -695,10 +725,16 @@ export const api = {
   playlists: {
     list: () => request<Playlist[]>("/api/playlists"),
     get: (id: number) => request<PlaylistDetail>(`/api/playlists/${id}`),
-    create: (data: { name: string; comment?: string; is_public?: boolean; track_ids?: number[] }) =>
+    create: (data: { name: string; comment?: string; is_public?: boolean; track_ids?: number[]; rules?: SmartRules }) =>
       request<Playlist>("/api/playlists", { method: "POST", body: json(data) }),
-    update: (id: number, data: { name?: string; comment?: string; is_public?: boolean }) =>
+    update: (id: number, data: { name?: string; comment?: string; is_public?: boolean; rules?: SmartRules }) =>
       request<Playlist>(`/api/playlists/${id}`, { method: "PATCH", body: json(data) }),
+    preview: (rules: SmartRules) =>
+      request<{ count: number; duration: number; tracks: Track[] }>("/api/playlists/preview", { method: "POST", body: json(rules) }),
+    setMembers: (id: number, user_ids: number[]) =>
+      request<Playlist>(`/api/playlists/${id}/members`, { method: "PUT", body: json({ user_ids }) }),
+    leave: (id: number) => request<{ ok: true }>(`/api/playlists/${id}/leave`, { method: "POST" }),
+    users: () => request<UserBrief[]>("/api/users/directory"),
     remove: (id: number) => request<{ ok: true }>(`/api/playlists/${id}`, { method: "DELETE" }),
     addTracks: (id: number, track_ids: number[]) =>
       request<{ added: number }>(`/api/playlists/${id}/tracks`, { method: "POST", body: json({ track_ids }) }),
@@ -785,6 +821,8 @@ export const api = {
     deleteUser: (id: number) => request<{ ok: true }>(`/api/admin/users/${id}`, { method: "DELETE" }),
     libraries: () => request<AdminLibrary[]>("/api/admin/libraries"),
     analysis: () => request<AnalysisStatus>("/api/admin/analysis"),
+    duplicates: (strict: boolean) => request<DuplicatesResult>(`/api/admin/duplicates${qs({ strict })}`),
+    ignoreDuplicate: (key: string) => request<{ ok: true }>("/api/admin/duplicates/ignore", { method: "POST", body: json({ key }) }),
     updateAnalysis: (data: { enabled?: boolean; start?: string; end?: string }) =>
       request<AnalysisStatus>("/api/admin/analysis", { method: "PUT", body: json(data) }),
     runAnalysis: () => request<AnalysisStatus>("/api/admin/analysis/run", { method: "POST" }),

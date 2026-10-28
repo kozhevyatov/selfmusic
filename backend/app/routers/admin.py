@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -27,6 +28,7 @@ from ..schemas import (
     UserAdminUpdate,
     UserOut,
 )
+from .. import duplicates
 from ..security import hash_password, require_admin
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -338,3 +340,24 @@ def scan_status(_: User = Depends(require_admin)) -> dict:
 def start_scan(data: ScanRequest, _: User = Depends(require_admin)) -> dict:
     started = scanner.start(library_id=data.library_id, full=data.full)
     return {**scanner.status(), "started": started}
+
+
+# ---------------- дубликаты ----------------
+
+
+@router.get("/admin/duplicates")
+def get_duplicates(strict: bool = True, db: Session = Depends(get_db), user: User = Depends(require_admin)) -> dict:
+    groups = duplicates.find(db, user, strict=strict)
+    waste = sum(t["size"] for g in groups for t in g["tracks"] if not t["best"])
+    return {"groups": groups, "count": len(groups), "reclaimable": waste}
+
+
+class IgnoreIn(BaseModel):
+    key: str
+
+
+@router.post("/admin/duplicates/ignore")
+def ignore_duplicate(data: IgnoreIn, db: Session = Depends(get_db), _: User = Depends(require_admin)) -> dict:
+    duplicates.ignore(db, data.key[:32])
+    db.commit()
+    return {"ok": True}

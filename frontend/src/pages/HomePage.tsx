@@ -120,7 +120,7 @@ export default function HomePage() {
 
       {mixes.data?.now && <NowMixHero mix={mixes.data.now} season={mixes.data.season} />}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
         <ContinueCard fallback={d.random_albums[0]} />
         <div className="glass flex flex-col gap-4 rounded-3xl border p-6">
           <div className="flex items-baseline justify-between">

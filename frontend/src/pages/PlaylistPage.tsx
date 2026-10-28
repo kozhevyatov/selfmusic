@@ -1,7 +1,10 @@
 import { DownloadButton } from "@/components/DownloadButton";
 import { useState } from "react";
 import { PlayFill } from "@/components/icon";
-import { Ellipsis, Globe, Link as LinkIcon, ListEnd, ListMusic, Pencil, Shuffle, Trash } from "@/components/icons";
+import { Ellipsis, Globe, Link as LinkIcon, ListEnd, ListMusic, LogOut, Pencil, Shuffle, Sparkles, Trash, Users } from "@/components/icons";
+import { Avatar } from "@/components/Cover";
+import { MembersDialog } from "@/components/MembersDialog";
+import { SmartPlaylistEditor } from "@/components/SmartPlaylistEditor";
 import { useCanShare } from "@/lib/auth";
 import { TrackList } from "@/components/TrackList";
 import { Empty, ErrorBox, PageLoader } from "@/components/ui/misc";
@@ -22,6 +25,8 @@ export default function PlaylistPage() {
   const plId = Number(id);
   const q = useQuery(["playlist", plId], () => api.playlists.get(plId));
   const [editing, setEditing] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
   const pl = q.data;
   const palette = usePalette(coverUrl(pl?.covers[0], 96), pl?.name ?? "");
   const canShare = useCanShare();
@@ -69,13 +74,24 @@ export default function PlaylistPage() {
           </div>
           <div className="min-w-0">
             <div className="label-caps flex items-center gap-2">
-              {pl.is_public && <Globe className="size-3.5" />} {pl.is_public ? "Общий плейлист" : "Плейлист"}
+              {pl.smart ? <Sparkles className="size-3.5" /> : pl.members.length ? <Users className="size-3.5" /> : pl.is_public && <Globe className="size-3.5" />}{" "}
+              {pl.smart ? "Умный плейлист · обновляется сам" : pl.members.length ? "Совместный плейлист" : pl.is_public ? "Общий плейлист" : "Плейлист"}
             </div>
             <h1 className="title-display mt-2 text-4xl break-words sm:text-6xl">{pl.name}</h1>
             {pl.comment && <p className="mt-3 max-w-2xl text-muted">{pl.comment}</p>}
             <p className="mt-3 text-[15px] text-muted">
               <span className="font-bold text-fg">{pl.owner.name}</span> · {tracksLabel(pl.track_count)}, {formatDuration(pl.duration)}
             </p>
+            {pl.members.length > 0 && (
+              <div className="mt-3 flex items-center gap-2">
+                <div className="flex -space-x-2">
+                  {[pl.owner, ...pl.members].slice(0, 6).map((m) => (
+                    <Avatar key={m.id} name={m.name} src={m.avatar} className="size-8 text-xs ring-2 ring-bg" />
+                  ))}
+                </div>
+                <span className="text-sm text-muted">{[pl.owner, ...pl.members].map((m) => m.name).join(", ")}</span>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -113,6 +129,21 @@ export default function PlaylistPage() {
             ...(canShare
               ? [{ label: "Поделиться ссылкой", icon: <LinkIcon />, onSelect: () => dialogs.share({ kind: "playlist", item_id: pl.id, label: pl.name }) }]
               : []),
+            ...(pl.is_owner && pl.smart ? [{ label: "Изменить правила", icon: <Sparkles />, onSelect: () => setRulesOpen(true) }] : []),
+            ...(pl.is_owner && !pl.smart ? [{ label: "Соавторы…", icon: <Users />, onSelect: () => setMembersOpen(true) }] : []),
+            ...(!pl.is_owner && pl.members.length
+              ? [
+                  {
+                    label: "Выйти из плейлиста",
+                    icon: <LogOut />,
+                    onSelect: async () => {
+                      await api.playlists.leave(pl.id);
+                      invalidate(["playlists"]);
+                      navigate("/playlists", { replace: true });
+                    },
+                  },
+                ]
+              : []),
             ...(pl.is_owner
               ? [
                   { label: "Название и доступ", icon: <Pencil />, onSelect: () => setEditing(true) },
@@ -131,9 +162,9 @@ export default function PlaylistPage() {
 
       {pl.tracks.length === 0 ? (
         <Empty
-          icon={<ListMusic />}
-          title="В плейлисте пусто"
-          text="Добавляйте треки через меню «…» у трека или альбома."
+          icon={pl.smart ? <Sparkles /> : <ListMusic />}
+          title={pl.smart ? "Под условия пока ничего не подходит" : "В плейлисте пусто"}
+          text={pl.smart ? "Измените правила — или плейлист наполнится сам, когда появится подходящая музыка." : "Добавляйте треки через меню «…» у трека или альбома."}
           action={
             <Link to="/albums" className="font-bold text-accent-ink hover:underline">
               К альбомам
@@ -141,9 +172,11 @@ export default function PlaylistPage() {
           }
         />
       ) : (
-        <TrackList tracks={pl.tracks} showCover showAlbum selectable onRemove={pl.is_owner ? removeEntry : undefined} className="-mx-2 sm:-mx-3" />
+        <TrackList tracks={pl.tracks} showCover showAlbum selectable onRemove={pl.can_edit ? removeEntry : undefined} className="-mx-2 sm:-mx-3" />
       )}
       {pl.is_owner && <PlaylistForm open={editing} onClose={() => setEditing(false)} initial={pl} />}
+      {pl.is_owner && pl.smart && <SmartPlaylistEditor open={rulesOpen} onClose={() => setRulesOpen(false)} playlist={pl} />}
+      {pl.is_owner && !pl.smart && <MembersDialog open={membersOpen} onClose={() => setMembersOpen(false)} playlist={pl} />}
     </div>
   );
 }

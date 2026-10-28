@@ -26,7 +26,39 @@ function emit() {
   window.dispatchEvent(new Event(NAV_EVENT));
 }
 
-window.addEventListener("popstate", emit);
+/* Страница прокручивается не документом, а контейнером #app-scroll (см. Layout):
+   так нижняя панель на iPhone не прыгает между короткими и длинными экранами.
+   Поэтому позицию прокрутки при «назад» восстанавливаем сами. */
+export function scroller(): HTMLElement | null {
+  return document.getElementById("app-scroll");
+}
+const positions = new Map<string, number>();
+const keyOf = () => (window.history.state?.key as string | undefined) ?? "root";
+function saveScroll() {
+  const el = scroller();
+  if (el) positions.set(keyOf(), el.scrollTop);
+}
+function restoreScroll() {
+  const target = positions.get(keyOf()) ?? 0;
+  let tries = 0;
+  const step = () => {
+    const el = scroller();
+    if (!el) return;
+    el.scrollTop = target;
+    // данные страницы могут ещё грузиться — ждём, пока высоты хватит (до ~1.5 с)
+    if (Math.abs(el.scrollTop - target) > 2 && tries++ < 90) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
+let lastKey = keyOf();
+window.addEventListener("popstate", () => {
+  const el = scroller();
+  if (el) positions.set(lastKey, el.scrollTop);
+  lastKey = keyOf();
+  emit();
+  restoreScroll();
+});
 
 function subscribe(cb: () => void) {
   window.addEventListener(NAV_EVENT, cb);
@@ -40,14 +72,17 @@ export function navigate(to: string | number, opts: { replace?: boolean; state?:
   }
   const url = new URL(to, window.location.href);
   if (url.pathname + url.search === window.location.pathname + window.location.search && !opts.state) {
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    scroller()?.scrollTo({ top: 0, behavior: "smooth" });
     return;
   }
-  const data = { usr: opts.state ?? null };
+  saveScroll();
+  const key = opts.replace ? keyOf() : Math.random().toString(36).slice(2, 10);
+  const data = { usr: opts.state ?? null, key };
   if (opts.replace) window.history.replaceState(data, "", url.pathname + url.search + url.hash);
   else window.history.pushState(data, "", url.pathname + url.search + url.hash);
+  lastKey = key;
   emit();
-  if (!opts.replace) window.scrollTo(0, 0);
+  if (!opts.replace) scroller()?.scrollTo(0, 0);
 }
 
 export function useLocation(): Loc {

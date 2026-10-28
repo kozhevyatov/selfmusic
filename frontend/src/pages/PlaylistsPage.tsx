@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Cover } from "@/components/Cover";
 import { PlayFill } from "@/components/icon";
-import { Globe, ListMusic, LoaderCircle, Plus } from "@/components/icons";
+import { Globe, ListMusic, LoaderCircle, Plus, Sparkles, Users } from "@/components/icons";
+import { SmartPlaylistEditor } from "@/components/SmartPlaylistEditor";
 import { PageHeader } from "@/components/Section";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -116,9 +117,14 @@ export default function PlaylistsPage() {
       <PageHeader
         title="Плейлисты"
         actions={
-          <Button onClick={() => setSearchParam("new", "1")}>
-            <Plus className="size-4" /> Новый плейлист
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setSearchParam("smart", "1")}>
+              <Sparkles className="size-4" /> Умный плейлист
+            </Button>
+            <Button onClick={() => setSearchParam("new", "1")}>
+              <Plus className="size-4" /> Новый плейлист
+            </Button>
+          </div>
         }
       />
       {pls.isLoading && <PageLoader />}
@@ -148,17 +154,28 @@ export default function PlaylistsPage() {
             </div>
             <div className="min-w-0 px-0.5">
               <div className="flex items-center gap-1.5 truncate text-[15px] font-bold">
-                {pl.is_public && <Globe className="size-3.5 shrink-0 text-accent-ink" />}
+                {pl.smart ? (
+                  <Sparkles className="size-3.5 shrink-0 text-accent-ink" />
+                ) : pl.members.length ? (
+                  <Users className="size-3.5 shrink-0 text-accent-ink" />
+                ) : (
+                  pl.is_public && <Globe className="size-3.5 shrink-0 text-accent-ink" />
+                )}
                 <span className="truncate">{pl.name}</span>
               </div>
               <div className="truncate text-[13px] text-muted">
-                {pl.is_owner ? `${pl.track_count} тр. · ${formatDuration(pl.duration)}` : `от ${pl.owner.name}`}
+                {pl.smart
+                  ? `Умный · ${pl.track_count} тр.`
+                  : pl.is_owner
+                    ? `${pl.track_count} тр. · ${formatDuration(pl.duration)}${pl.members.length ? " · совместный" : ""}`
+                    : `от ${pl.owner.name}${pl.members.length ? " · вы соавтор" : ""}`}
               </div>
             </div>
           </Link>
         ))}
       </div>
       <PlaylistForm open={creating} onClose={() => setSearchParam("new", null)} />
+      <SmartPlaylistEditor open={params.get("smart") === "1"} onClose={() => setSearchParam("smart", null)} />
     </div>
   );
 }

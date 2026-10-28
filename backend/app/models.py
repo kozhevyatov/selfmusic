@@ -213,6 +213,8 @@ class Playlist(Base):
     name: Mapped[str] = mapped_column(String(255))
     comment: Mapped[str] = mapped_column(Text, default="")
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Умный плейлист: правила (JSON) вместо списка треков; NULL — обычный плейлист
+    rules: Mapped[str | None] = mapped_column(LongText, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -226,6 +228,18 @@ class PlaylistEntry(Base):
     playlist_id: Mapped[int] = mapped_column(ForeignKey("playlists.id", ondelete="CASCADE"), index=True)
     track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    # кто добавил (в совместных плейлистах показываем аватарку)
+    added_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class PlaylistMember(Base):
+    """Соавторы плейлиста: видят его у себя и могут добавлять, убирать и переставлять треки."""
+
+    __tablename__ = "playlist_members"
+
+    playlist_id: Mapped[int] = mapped_column(ForeignKey("playlists.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Star(Base):

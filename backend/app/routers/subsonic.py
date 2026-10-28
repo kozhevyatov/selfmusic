@@ -26,11 +26,11 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from .. import db as dbmod
-from .. import mixes, ratelimit
+from .. import mixes, ratelimit, smart
 from ..access import allowed_library_ids
 from ..config import VERSION
 from ..media import content_type, cover_path, file_response, image_response, placeholder_cover, stream_track, track_file
-from ..models import Album, Artist, Bookmark, Library, Play, Playlist, PlaylistEntry, PlayQueue, Rating, Star, Track, User
+from ..models import Album, Artist, Bookmark, Library, Play, Playlist, PlaylistEntry, PlaylistMember, PlayQueue, Rating, Star, Track, User
 from ..queries import album_list_query, album_tracks, artists_with_counts, genres, search_tracks, top_tracks, tracks_query
 from ..scanner import scanner
 from ..security import decrypt_secret, verify_password
@@ -778,6 +778,9 @@ def get_now_playing(c: Ctx) -> dict:
 
 
 def _playlist_tracks(c: Ctx, pl: Playlist) -> list[Track]:
+    rules = smart.parse_rules(pl.rules)
+    if rules is not None:
+        return smart.evaluate(c.db, c.user, rules)
     return list(
         c.db.scalars(
             select(Track)
@@ -789,6 +792,8 @@ def _playlist_tracks(c: Ctx, pl: Playlist) -> list[Track]:
 
 
 def _playlist(c: Ctx, pl: Playlist, tracks: list[Track] | None = None) -> dict:
+    if tracks is None and pl.rules:
+        tracks = _playlist_tracks(c, pl)
     if tracks is None:
         stats = c.db.execute(
             select(func.count(Track.id), func.coalesce(func.sum(Track.duration), 0), func.min(Track.album_id))
@@ -816,10 +821,11 @@ def _playlist(c: Ctx, pl: Playlist, tracks: list[Track] | None = None) -> dict:
 def _get_pl(c: Ctx, raw: str, write: bool = False) -> Playlist:
     _, pid = _parse_id(raw, "pl")
     pl = c.db.get(Playlist, pid)
-    if not pl or (pl.owner_id != c.user.id and not pl.is_public):
+    member = pl is not None and c.db.get(PlaylistMember, (pl.id, c.user.id)) is not None
+    if not pl or (pl.owner_id != c.user.id and not pl.is_public and not member):
         raise SubsonicError(70, "Плейлист не найден")
-    if write and pl.owner_id != c.user.id:
-        raise SubsonicError(50, "Можно менять только свои плейлисты")
+    if write and (pl.rules or (pl.owner_id != c.user.id and not member)):
+        raise SubsonicError(50, "Умный плейлист собирается сам" if pl.rules else "Можно менять только свои и совместные плейлисты")
     return pl
 
 
@@ -831,7 +837,7 @@ def _append(c: Ctx, pl: Playlist, raw_ids: list[str]) -> None:
         except SubsonicError:
             continue
         pos += 1
-        c.db.add(PlaylistEntry(playlist_id=pl.id, track_id=track.id, position=pos))
+        c.db.add(PlaylistEntry(playlist_id=pl.id, track_id=track.id, position=pos, added_by=c.user.id))
     pl.updated_at = datetime.now(timezone.utc)
 
 
@@ -862,9 +868,10 @@ def _mix_tracks(c: Ctx, key: str) -> list[Track]:
 
 @method("getPlaylists")
 def get_playlists(c: Ctx) -> dict:
+    mine = select(PlaylistMember.playlist_id).where(PlaylistMember.user_id == c.user.id)
     pls = c.db.scalars(
         select(Playlist)
-        .where((Playlist.owner_id == c.user.id) | Playlist.is_public.is_(True))
+        .where((Playlist.owner_id == c.user.id) | Playlist.is_public.is_(True) | Playlist.id.in_(mine))
         .order_by(desc(Playlist.updated_at))
     )
     items = []

@@ -5,7 +5,7 @@ import { formatTime } from "@/lib/format";
 import { player, usePlayer } from "@/lib/player";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
-import { Cover } from "./Cover";
+import { Avatar, Cover } from "./Cover";
 import { HeartFill, PauseFill, PlayFill } from "./icon";
 import { Check, Heart, Link as LinkIcon, ListEnd, ListPlus, X } from "./icons";
 import { useCanShare } from "@/lib/auth";
@@ -177,6 +177,11 @@ const Row = memo(function Row({
         >
           {track.starred ? <HeartFill className="size-[18px]" /> : <Heart className="size-[18px]" />}
         </button>
+        {track.added_by && (
+          <span title={`Добавил(а) ${track.added_by.name}`} className="hidden sm:inline-flex">
+            <Avatar name={track.added_by.name} src={track.added_by.avatar} className="size-6 text-[10px]" />
+          </span>
+        )}
         <span className="num hidden w-11 text-right text-sm text-muted sm:block">{formatTime(track.duration)}</span>
         <TrackMenuButton track={track} canEdit={canEdit} removeLabel={removeLabel} onRemoveFromPlaylist={onRemove ? () => onRemove(track) : undefined} />
       </div>

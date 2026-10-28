@@ -111,7 +111,7 @@ function Sidebar() {
   const libs = useQuery(["libraries"], api.library.libraries, { staleTime: 300_000 });
   const hasBooks = Boolean(libs.data?.some((l) => l.kind === "audiobooks"));
   return (
-    <aside className="sticky top-0 hidden h-svh w-[260px] shrink-0 flex-col gap-7 border-r px-4 pt-7 pb-[112px] lg:flex">
+    <aside className="hidden h-dvh w-[260px] shrink-0 flex-col gap-7 border-r px-4 pt-7 pb-[112px] lg:flex">
       <Link to="/" className="px-2">
         <Brand name={settings.data?.site_name} />
       </Link>
@@ -285,12 +285,12 @@ export function Layout({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className="relative isolate flex min-h-svh">
+    <div className="relative isolate flex h-dvh overflow-hidden">
       <div className="fixed inset-0 -z-10">
         <Ambient />
       </div>
       <Sidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div id="app-scroll" className="flex min-w-0 flex-1 flex-col overflow-y-auto overscroll-y-contain">
         <MobileHeader />
         <main
           className={cn(
