@@ -1,6 +1,6 @@
 import { api, downloadUrl, type Track } from "@/lib/api";
 import { useCanShare } from "@/lib/auth";
-import { queueTracks, setFavorite } from "@/lib/actions";
+import { queueTracks, setFavorite, startRadio } from "@/lib/actions";
 import { dialogs } from "@/lib/dialogs";
 import { invalidate } from "@/lib/query";
 import { navigate } from "@/lib/router";
@@ -18,6 +18,7 @@ import {
   ListStart,
   MicVocal,
   Pencil,
+  Radio,
   Trash,
   X,
 } from "./icons";
@@ -30,6 +31,7 @@ export function trackMenuItems(
     { label: "Играть следующим", icon: <ListStart />, onSelect: () => queueTracks([track], true) },
     { label: "Добавить в очередь", icon: <ListEnd />, onSelect: () => queueTracks([track], false) },
     { label: "В плейлист…", icon: <ListPlus />, onSelect: () => dialogs.addToPlaylist([track]) },
+    { label: "Радио по треку", icon: <Radio />, onSelect: () => void startRadio({ track, label: track.title }) },
     {
       label: track.starred ? "Убрать из избранного" : "В избранное",
       icon: <Heart />,

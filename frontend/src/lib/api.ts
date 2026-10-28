@@ -68,6 +68,9 @@ export type Track = {
   size: number;
   cover: string | null;
   has_lyrics: boolean;
+  /** громкость для выравнивания, дБ (ReplayGain или по анализу) */
+  gain?: number | null;
+  album_gain?: number | null;
   starred: boolean;
   can_delete?: boolean;
   entry_id?: number;
@@ -561,6 +564,8 @@ export const api = {
   library: {
     home: () => request<Home>("/api/home"),
     libraries: () => request<MyLibrary[]>("/api/libraries"),
+    radio: (body: { track_id?: number; artist_id?: number; exclude?: number[]; count?: number }) =>
+      request<{ tracks: Track[] }>("/api/radio", { method: "POST", body: json(body) }),
     mixes: () => request<MixesOverview>("/api/mixes"),
     mix: (key: string) => request<MixDetail>(`/api/mixes/${key}`),
     refreshMix: (key: string) => request<MixDetail>(`/api/mixes/${key}/refresh`, { method: "POST" }),

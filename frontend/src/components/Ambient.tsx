@@ -18,20 +18,19 @@ export function Ambient({
   const [a, b] = colors ?? ["var(--accent)", "#6b5bff"];
   return (
     <div aria-hidden="true" className={cn("pointer-events-none absolute inset-0 -z-10 overflow-hidden", className)}>
+      {/* «Капли» — радиальные градиенты, а не размытие фильтром: выглядят так же, но видеокарте почти ничего не стоят */}
       <div
-        className="animate-drift-a absolute -top-[22%] -right-[12%] h-[70%] w-[55%] min-w-[420px] blur-[90px] transition-[background] duration-1000"
+        className="animate-drift-a absolute -top-[40%] -right-[25%] h-[110%] w-[85%] min-w-[640px] will-change-transform"
         style={{
-          background: a,
+          background: `radial-gradient(closest-side, ${a}, color-mix(in srgb, ${a} 45%, transparent) 45%, transparent)`,
           opacity: `calc(var(--blob-opacity) * ${intensity})`,
-          borderRadius: "42% 58% 63% 37% / 41% 44% 56% 59%",
         }}
       />
       <div
-        className="animate-drift-b absolute -bottom-[25%] left-[8%] h-[62%] w-[50%] min-w-[380px] blur-[110px] transition-[background] duration-1000"
+        className="animate-drift-b absolute -bottom-[45%] -left-[8%] h-[105%] w-[80%] min-w-[600px] will-change-transform"
         style={{
-          background: b,
+          background: `radial-gradient(closest-side, ${b}, color-mix(in srgb, ${b} 45%, transparent) 45%, transparent)`,
           opacity: `calc(var(--blob-opacity) * ${intensity * 0.8})`,
-          borderRadius: "61% 39% 45% 55% / 52% 61% 39% 48%",
         }}
       />
       {waves && (

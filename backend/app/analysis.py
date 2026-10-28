@@ -31,7 +31,7 @@ from .models import Library, Track, TrackFeature
 
 log = logging.getLogger("uvicorn.error")
 
-ANALYSIS_VERSION = 1
+ANALYSIS_VERSION = 2  # 2: + громкость для выравнивания (auto_gain)
 SR = 22050
 SEGMENT = 45.0  # сек
 N_FFT = 2048
@@ -101,6 +101,10 @@ def features(y: np.ndarray) -> dict:
         raise ValueError("тишина")
     loudness = float(np.mean(loud))
     dynamics = float(np.std(loud))
+    # «энергетическая» громкость (среднее по мощности, не по децибелам) ≈ LUFS для музыки;
+    # выравнивание к −18 LUFS, как у ReplayGain
+    power_db = float(10 * np.log10(np.mean(rms[db > -60] ** 2) + 1e-12))
+    gain_db = float(np.clip(-18.0 - power_db, -15.0, 10.0))
 
     # «яркость»
     power = mag.sum(axis=1) + 1e-9
@@ -177,6 +181,7 @@ def features(y: np.ndarray) -> dict:
         "pulse": round(pulse, 3),
         "mode": round(mode, 4),
         "musical_key": key,
+        "gain_db": round(gain_db, 2),
         "energy": round(float(energy), 4),
         "valence": round(float(valence), 4),
     }
@@ -315,10 +320,14 @@ class Analyzer:
             result = analyze_file(os.path.join(lib_path, rel), duration or 0)
         except Exception as exc:  # noqa: BLE001
             error = str(exc)[:255] or exc.__class__.__name__
+        gain = result.pop("gain_db", None)
         with dbmod.session_scope() as db:
             feat = db.get(TrackFeature, track_id) or TrackFeature(track_id=track_id)
             for k, v in result.items():
                 setattr(feat, k, v)
+            track = db.get(Track, track_id)
+            if track is not None and gain is not None:
+                track.auto_gain = gain
             feat.version = ANALYSIS_VERSION
             feat.mtime = mtime
             feat.error = error

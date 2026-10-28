@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, coverUrl } from "@/lib/api";
 import { setFavorite } from "@/lib/actions";
 import { usePalette } from "@/lib/colors";
 import { formatTime } from "@/lib/format";
+import { parseLyrics } from "@/lib/lyrics";
 import { player, useCurrentTrack, usePlayer } from "@/lib/player";
 import { Link } from "@/lib/router";
 import { toast } from "@/lib/toast";
@@ -16,15 +17,18 @@ import {
   Heart,
   ListMusic,
   LoaderCircle,
+  Radio,
   Repeat,
   Repeat1,
   Shuffle,
+  SlidersHorizontal,
   TextQuote,
   Volume1,
   Volume2,
   VolumeX,
   X,
 } from "./icons";
+import { EqualizerDialog } from "./SoundSettings";
 import { TrackMenuButton } from "./TrackMenu";
 
 // ---------- общие элементы управления ----------
@@ -279,8 +283,21 @@ function QueueList() {
   const index = usePlayer((s) => s.index);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const upcoming = queue.slice(index + 1);
+  const radio = usePlayer((s) => s.radio);
   return (
     <div className="flex flex-col gap-1">
+      {radio && (
+        <div className="mx-1 mb-1 flex items-center gap-3 rounded-2xl bg-white/10 px-3 py-2.5">
+          <Radio className="size-5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-bold tracking-[0.08em] uppercase opacity-70">Радио</div>
+            <div className="truncate text-sm font-bold">{radio.label}</div>
+          </div>
+          <button onClick={() => player.stopRadio()} className="rounded-full px-3 py-1.5 text-[13px] font-bold opacity-80 hover:bg-white/10 hover:opacity-100">
+            Выключить
+          </button>
+        </div>
+      )}
       <div className="flex items-baseline justify-between px-2 pt-1 pb-2">
         <h3 className="text-[15px] font-extrabold">Далее · {upcoming.length}</h3>
         {upcoming.length > 0 && (
@@ -289,7 +306,9 @@ function QueueList() {
           </button>
         )}
       </div>
-      {upcoming.length === 0 && <p className="px-2 py-6 text-center text-sm text-muted">После этого трека очередь закончится</p>}
+      {upcoming.length === 0 && (
+        <p className="px-2 py-6 text-center text-sm text-muted">{radio ? "Подбираю похожие…" : "После этого трека очередь закончится"}</p>
+      )}
       {upcoming.slice(0, 300).map((t, k) => {
         const i = index + 1 + k;
         return (
@@ -330,6 +349,8 @@ function QueueList() {
 function Lyrics({ trackId }: { trackId: number }) {
   const [text, setText] = useState<string | null | undefined>(undefined);
   const time = usePlayer((s) => s.time);
+  const box = useRef<HTMLDivElement>(null);
+  const userScrolled = useRef(0);
   useEffect(() => {
     let alive = true;
     setText(undefined);
@@ -341,32 +362,54 @@ function Lyrics({ trackId }: { trackId: number }) {
       alive = false;
     };
   }, [trackId]);
+  const parsed = useMemo(() => (text ? parseLyrics(text) : null), [text]);
+  const activeIdx =
+    parsed?.synced ? parsed.lines.reduce((acc, l, i) => (l.at !== null && l.at <= time + 0.15 ? i : acc), -1) : -1;
+
+  // текущая строка — в центре (если пользователь сам не листает последние 4 секунды)
+  useEffect(() => {
+    if (activeIdx < 0 || Date.now() - userScrolled.current < 4000) return;
+    const el = box.current?.querySelector<HTMLElement>(`[data-line="${activeIdx}"]`);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [activeIdx]);
+
   if (text === undefined) return <p className="py-10 text-center text-sm opacity-70">Загрузка…</p>;
-  if (!text)
+  if (!text || !parsed)
     return (
       <p className="px-4 py-10 text-center text-sm leading-relaxed opacity-70">
-        Текста нет. Его можно добавить в редакторе тегов или положить рядом с файлом .lrc с тем же именем.
+        Текста нет. Его можно добавить в редакторе тегов или положить рядом с файлом .lrc с тем же именем — тогда строки
+        будут подсвечиваться в такт.
       </p>
     );
-  const lines = text.split(/\r?\n/).map((line) => {
-    const m = /^\s*\[(\d+):(\d+(?:\.\d+)?)\](.*)$/.exec(line);
-    return m ? { at: Number(m[1]) * 60 + Number(m[2]), text: m[3].trim() } : { at: null as number | null, text: line.replace(/^\s*\[[a-z]+:.*\]$/i, "") };
-  });
-  const synced = lines.some((l) => l.at !== null);
-  const activeIdx = synced ? lines.reduce((acc, l, i) => (l.at !== null && l.at <= time ? i : acc), -1) : -1;
   return (
-    <div className="flex flex-col gap-3 px-2 py-2">
-      {lines.map((l, i) => (
+    <div
+      ref={box}
+      onWheel={() => (userScrolled.current = Date.now())}
+      onTouchMove={() => (userScrolled.current = Date.now())}
+      className="flex flex-col gap-3 px-2 py-[30%]"
+    >
+      {parsed.lines.map((l, i) => (
         <p
           key={i}
-          onClick={() => l.at !== null && player.seek(l.at)}
+          data-line={i}
+          onClick={() => {
+            if (l.at === null) return;
+            userScrolled.current = 0;
+            player.seek(l.at);
+          }}
           className={cn(
-            "text-xl leading-snug font-extrabold transition sm:text-2xl",
-            synced ? (i === activeIdx ? "opacity-100" : "opacity-35") : "opacity-90",
+            "origin-left text-xl leading-snug font-extrabold transition-all duration-300 sm:text-2xl",
+            parsed.synced
+              ? i === activeIdx
+                ? "scale-[1.03] opacity-100"
+                : i < activeIdx
+                  ? "opacity-30"
+                  : "opacity-45"
+              : "opacity-90",
             l.at !== null && "cursor-pointer hover:opacity-80",
           )}
         >
-          {l.text || " "}
+          {l.text || "♪"}
         </p>
       ))}
     </div>
@@ -379,6 +422,7 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
   const track = useCurrentTrack();
   const [tab, setTab] = useState<"queue" | "lyrics">("queue");
   const [panelOpen, setPanelOpen] = useState(false);
+  const [eqOpen, setEqOpen] = useState(false);
   const palette = usePalette(coverUrl(track?.cover, 96), track ? track.album + track.album_artist : "x");
 
   useEffect(() => {
@@ -451,11 +495,21 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
             {track.album}
           </Link>
         </div>
-        <TrackMenuButton
-          track={track}
-          className="flex size-11 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
-        />
+        <div className="flex items-center gap-2">
+          <button
+            aria-label="Эквалайзер"
+            onClick={() => setEqOpen(true)}
+            className="flex size-11 items-center justify-center rounded-full bg-white/10 hover:bg-white/20"
+          >
+            <SlidersHorizontal className="size-5" />
+          </button>
+          <TrackMenuButton
+            track={track}
+            className="flex size-11 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
+          />
+        </div>
       </header>
+      <EqualizerDialog open={eqOpen} onClose={() => setEqOpen(false)} />
 
       <div className="flex min-h-0 flex-1 flex-col gap-6 px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-10 lg:flex-row lg:items-stretch lg:gap-12 lg:px-14 lg:pb-10">
         <div className={cn("flex min-h-0 flex-1 flex-col justify-center gap-6 lg:max-w-[560px]", panelOpen && "hidden lg:flex")}>

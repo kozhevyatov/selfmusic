@@ -174,3 +174,21 @@ def analysis_run(_: User = Depends(require_admin)) -> dict:
 def analysis_stop(_: User = Depends(require_admin)) -> dict:
     analyzer.stop_now()
     return analyzer.status()
+
+
+# ---------------- радио ----------------
+
+
+class RadioIn(BaseModel):
+    track_id: int | None = None
+    artist_id: int | None = None
+    exclude: list[int] = Field(default_factory=list, max_length=5000)
+    count: int = Field(default=25, ge=1, le=100)
+
+
+@router.post("/radio")
+def radio(data: RadioIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    if not data.track_id and not data.artist_id:
+        raise HTTPException(422, "Укажите трек или исполнителя")
+    ids = mx.radio(db, user, track_id=data.track_id, artist_id=data.artist_id, exclude=set(data.exclude), count=data.count)
+    return {"tracks": tracks_out(db, user.id, load_tracks(db, user, ids))}

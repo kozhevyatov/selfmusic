@@ -191,6 +191,10 @@ class Track(Base):
     mtime: Mapped[float] = mapped_column(Double, default=0)
     has_cover: Mapped[bool] = mapped_column(Boolean, default=False)
     lyrics: Mapped[str | None] = mapped_column(LongText, nullable=True)
+    # Громкость: ReplayGain из тегов и оценка по анализу звука (дБ, к уровню −18 LUFS)
+    replaygain: Mapped[float | None] = mapped_column(Float, nullable=True)
+    replaygain_album: Mapped[float | None] = mapped_column(Float, nullable=True)
+    auto_gain: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     album: Mapped[Album] = relationship(lazy="joined")

@@ -2,6 +2,8 @@ import { useSyncExternalStore } from "react";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type Accent = "coral" | "violet" | "lime" | "teal";
+/** Анимация фона: smooth — плавно (греет слабые ноутбуки), eco — экономно, off — без анимации */
+export type Motion = "smooth" | "eco" | "off";
 
 export const ACCENTS: { id: Accent; label: string; color: string }[] = [
   { id: "coral", label: "Коралл", color: "#FF6A3D" },
@@ -18,7 +20,11 @@ function load<T extends string>(key: string, fallback: T): T {
   }
 }
 
-let state = { mode: load<ThemeMode>("sm-theme", "dark"), accent: load<Accent>("sm-accent", "coral") };
+let state = {
+  mode: load<ThemeMode>("sm-theme", "dark"),
+  accent: load<Accent>("sm-accent", "coral"),
+  motion: load<Motion>("sm-motion", "eco"),
+};
 const listeners = new Set<() => void>();
 const media = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -27,6 +33,7 @@ function apply() {
   const root = document.documentElement;
   root.classList.toggle("dark", dark);
   root.dataset.accent = state.accent;
+  root.dataset.motion = state.motion;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0d0d0f" : "#f6f4f0");
 }
 
@@ -37,6 +44,7 @@ function save() {
   try {
     localStorage.setItem("sm-theme", state.mode);
     localStorage.setItem("sm-accent", state.accent);
+    localStorage.setItem("sm-motion", state.motion);
   } catch {
     /* приватный режим */
   }
@@ -46,6 +54,11 @@ function save() {
 
 export function setThemeMode(mode: ThemeMode) {
   state = { ...state, mode };
+  save();
+}
+
+export function setMotion(motion: Motion) {
+  state = { ...state, motion };
   save();
 }
 

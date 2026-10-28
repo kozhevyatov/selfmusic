@@ -40,7 +40,7 @@ UNKNOWN_ARTIST = "Неизвестный исполнитель"
 BATCH = 200
 # Меняется, когда меняется само чтение тегов (например, исправление кодировки cp1251).
 # При запуске с новой версией один раз выполняется полное пересканирование.
-INDEX_VERSION = "3"
+INDEX_VERSION = "4"  # 4: ReplayGain из тегов
 COMMIT_EVERY = 2.0  # сек: не держим запись в SQLite дольше — веб-запросы ждут
 LYRICS_MAX = 100_000
 
@@ -185,6 +185,8 @@ def index_file(
     track.mtime = st.st_mtime
     track.has_cover = meta.has_cover
     track.lyrics = clean(meta.lyrics or _sidecar_lyrics(abs_path), LYRICS_MAX) or None
+    track.replaygain = meta.rg_track
+    track.replaygain_album = meta.rg_album
     if added:
         db.add(track)
     return added, ok

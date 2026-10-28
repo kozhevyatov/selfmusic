@@ -60,6 +60,9 @@ def track_out(t: Track, starred: set[int] | None = None) -> dict:
         "size": t.size,
         "cover": cover_url(album),
         "has_lyrics": bool(t.lyrics),
+        # громкость для выравнивания: дБ относительно −18 LUFS (теги ReplayGain, иначе — по анализу)
+        "gain": t.replaygain if t.replaygain is not None else t.auto_gain,
+        "album_gain": t.replaygain_album,
         "starred": t.id in starred if starred is not None else False,
     }
 

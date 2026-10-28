@@ -1,14 +1,14 @@
 import { AlbumCard, CardGrid } from "@/components/Cards";
 import { Avatar, Cover } from "@/components/Cover";
 import { HeartFill, PlayFill } from "@/components/icon";
-import { Heart, Link as LinkIcon, Shuffle } from "@/components/icons";
+import { Heart, Link as LinkIcon, Radio, Shuffle } from "@/components/icons";
 import { useCanShare } from "@/lib/auth";
 import { dialogs } from "@/lib/dialogs";
 import { Section } from "@/components/Section";
 import { TrackList } from "@/components/TrackList";
 import { ErrorBox, PageLoader } from "@/components/ui/misc";
 import { api, coverUrl } from "@/lib/api";
-import { playArtist, setFavorite } from "@/lib/actions";
+import { playArtist, setFavorite, startRadio } from "@/lib/actions";
 import { usePalette } from "@/lib/colors";
 import { albumsLabel, tracksLabel } from "@/lib/format";
 import { useQuery } from "@/lib/query";
@@ -70,6 +70,12 @@ export default function ArtistPage() {
           className={cn("flex size-12 items-center justify-center rounded-full border hover:bg-surface-2", a.starred && "text-accent-ink")}
         >
           {a.starred ? <HeartFill className="size-5" /> : <Heart className="size-5" />}
+        </button>
+        <button
+          onClick={() => startRadio({ artist_id: a.id, label: a.name })}
+          className="flex h-12 items-center gap-2 rounded-full border px-5 text-sm font-bold hover:bg-surface-2"
+        >
+          <Radio className="size-[18px]" /> Радио
         </button>
         {canShare && (
           <button

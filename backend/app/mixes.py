@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -182,6 +183,8 @@ class Cand:
     plays: int = 0
     last_played: datetime | None = None
     hours: list[int] = field(default_factory=list)
+    year: int | None = None
+    bpm: float = 0.0
 
 
 def _rank(values: list[float]) -> list[float]:
@@ -202,15 +205,16 @@ def load_pool(db: Session, user: User) -> dict[int, Cand]:
         return {}
     rows = db.execute(
         select(Track.id, Track.artist_id, Track.album_id, Track.genre, Track.title, Album.name,
-               TrackFeature.energy, TrackFeature.valence, TrackFeature.version, TrackFeature.error)
+               TrackFeature.energy, TrackFeature.valence, TrackFeature.version, TrackFeature.error,
+               Track.year, TrackFeature.bpm)
         .join(Album, Album.id == Track.album_id)
         .outerjoin(TrackFeature, TrackFeature.track_id == Track.id)
         .where(Track.library_id.in_(libs))
     ).all()
     pool: dict[int, Cand] = {}
     analyzed: list[Cand] = []
-    for tid, artist_id, album_id, genre, title, album, e, v, ver, err in rows:
-        c = Cand(tid, artist_id, album_id, genre or "", f"{title} {album}".lower())
+    for tid, artist_id, album_id, genre, title, album, e, v, ver, err, year, bpm in rows:
+        c = Cand(tid, artist_id, album_id, genre or "", f"{title} {album}".lower(), year=year, bpm=float(bpm or 0))
         if ver and err is None and e is not None:
             c.energy, c.valence, c.analyzed = float(e), float(v), True
             analyzed.append(c)
@@ -400,3 +404,106 @@ def subsonic_keys() -> list[str]:
     """Какие подборки показывать Subsonic-приложениям как плейлисты (чтобы не засорять список)."""
     return [current_time_mix(), current_season(), "energetic", "happy", "calm", "melancholy", "focus", "sleep", "forgotten"]
 
+
+
+# ---------------- «Радио»: похожие треки ----------------
+
+_pool_cache: dict[int, tuple[float, dict[int, Cand]]] = {}
+
+
+def cached_pool(db: Session, user: User, ttl: float = 600) -> dict[int, Cand]:
+    """Радио дозапрашивает треки много раз подряд — пул держим в памяти 10 минут."""
+    import time  # noqa: PLC0415
+
+    now = time.monotonic()
+    hit = _pool_cache.get(user.id)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    pool = load_pool(db, user)
+    _pool_cache[user.id] = (now, pool)
+    if len(_pool_cache) > 50:
+        _pool_cache.pop(next(iter(_pool_cache)))
+    return pool
+
+
+def _genre_words(g: str) -> set[str]:
+    return {w for w in re.split(r"[\s/,;&-]+", g.lower()) if len(w) > 2}
+
+
+def radio(
+    db: Session,
+    user: User,
+    *,
+    track_id: int | None = None,
+    artist_id: int | None = None,
+    exclude: set[int] | None = None,
+    count: int = 25,
+) -> list[int]:
+    """Похожие на трек (или на исполнителя) по энергии, настроению, темпу, жанру и году,
+    с учётом вкуса пользователя. Повторов из exclude нет, одного исполнителя — не больше двух подряд в выдаче."""
+    pool = cached_pool(db, user)
+    exclude = set(exclude or ())
+    seeds: list[Cand] = []
+    if track_id and track_id in pool:
+        seeds = [pool[track_id]]
+        exclude.add(track_id)
+    elif artist_id:
+        seeds = [c for c in pool.values() if c.artist_id == artist_id]
+    if not seeds:
+        return []
+    e = sum(c.energy for c in seeds) / len(seeds)
+    v = sum(c.valence for c in seeds) / len(seeds)
+    bpms = [c.bpm for c in seeds if c.bpm]
+    bpm = sum(bpms) / len(bpms) if bpms else 0
+    years = [c.year for c in seeds if c.year]
+    year = sum(years) / len(years) if years else None
+    genres: set[str] = set()
+    for c in seeds[:50]:
+        genres |= _genre_words(c.genre)
+    seed_artists = {c.artist_id for c in seeds}
+
+    rng = random.Random()
+    now = datetime.now(timezone.utc)
+    scored: list[tuple[float, Cand]] = []
+    for c in pool.values():
+        if c.id in exclude:
+            continue
+        d2 = ((c.energy - e) / 0.16) ** 2 + ((c.valence - v) / 0.2) ** 2
+        if bpm and c.bpm:
+            ratio = max(c.bpm, bpm) / min(c.bpm, bpm)
+            ratio = min(ratio, abs(ratio - 2) + 1)  # 70 и 140 — один «грув»
+            d2 += ((ratio - 1) / 0.12) ** 2
+        fit = math.exp(-0.5 * d2)
+        cg = _genre_words(c.genre)
+        if genres and cg & genres:
+            fit = fit * 1.6 + 0.15
+        elif genres and cg:
+            fit *= 0.6
+        if year and c.year:
+            fit *= math.exp(-abs(c.year - year) / 15)
+        if c.artist_id in seed_artists:
+            fit *= 1.3 if track_id else 1.6
+        personal = c.starred + 0.2 * min(1.0, math.log1p(c.plays) / math.log(20))
+        if c.last_played and now - c.last_played < timedelta(hours=6):
+            personal -= 0.4
+        scored.append((fit * max(0.2, 1 + personal) * rng.uniform(0.7, 1.3), c))
+    scored.sort(key=lambda x: -x[0])
+    out: list[Cand] = []
+    per_artist: dict = {}
+    for _, c in scored[: count * 8]:
+        cap = 3 if c.artist_id in seed_artists else 2
+        if per_artist.get(c.artist_id, 0) >= cap:
+            continue
+        out.append(c)
+        per_artist[c.artist_id] = per_artist.get(c.artist_id, 0) + 1
+        if len(out) >= count:
+            break
+    rng.shuffle(out)
+    # тот же исполнитель не подряд
+    for i in range(1, len(out)):
+        if out[i].artist_id == out[i - 1].artist_id:
+            for j in range(i + 1, len(out)):
+                if out[j].artist_id != out[i - 1].artist_id:
+                    out[i], out[j] = out[j], out[i]
+                    break
+    return [c.id for c in out]

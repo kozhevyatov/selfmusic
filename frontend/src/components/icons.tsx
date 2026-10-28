@@ -93,3 +93,4 @@ export const Flower = icon("flower", <><circle cx="12" cy="12" r="3" /> <path d=
 export const History = icon("history", <><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /> <path d="M3 3v5h5" /> <path d="M12 7v5l4 2" /></>);
 export const CalendarDays = icon("calendar", <><path d="M8 2v4" /> <path d="M16 2v4" /> <rect width="18" height="18" x="3" y="4" rx="2" /> <path d="M3 10h18" /></>);
 export const Minus = icon("minus", <><path d="M5 12h14" /></>);
+export const Radio = icon("radio", <><path d="M16.247 7.761a6 6 0 0 1 0 8.478" /> <path d="M19.075 4.933a10 10 0 0 1 0 14.134" /> <path d="M4.925 19.067a10 10 0 0 1 0-14.134" /> <path d="M7.753 16.239a6 6 0 0 1 0-8.478" /> <circle cx="12" cy="12" r="2" /></>);

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AvatarCropper } from "@/components/AvatarCropper";
+import { EqualizerDialog, SoundSettingsCard } from "@/components/SoundSettings";
 import { Avatar } from "@/components/Cover";
 import { Check, Copy, Eye, EyeOff, Image as ImageIcon, KeyRound, LoaderCircle, LogOut, Monitor, Moon, RefreshCw, Smartphone, Sun, Trash } from "@/components/icons";
 import { PageHeader } from "@/components/Section";
@@ -11,7 +12,7 @@ import { api, setSession, updateCurrentUser, type Quality } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { dialogs } from "@/lib/dialogs";
 import { navigate } from "@/lib/router";
-import { ACCENTS, setAccent, setThemeMode, useTheme, type ThemeMode } from "@/lib/theme";
+import { ACCENTS, setAccent, setMotion, setThemeMode, useTheme, type Motion, type ThemeMode } from "@/lib/theme";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -171,6 +172,7 @@ export default function ProfilePage() {
   const [form, setForm] = useState({ display_name: user?.display_name ?? "", email: user?.email ?? "" });
   const [pw, setPw] = useState({ current: "", next: "" });
   const [busy, setBusy] = useState<string | null>(null);
+  const [eqOpen, setEqOpen] = useState(false);
 
   if (!user) return null;
 
@@ -216,6 +218,15 @@ export default function ProfilePage() {
 
       <AvatarCard />
 
+      <Card className="flex flex-col gap-4">
+        <div>
+          <h2 className="text-lg font-extrabold">Звук</h2>
+          <p className="text-sm text-muted">Для этого устройства: на телефоне и компьютере можно настроить по-разному.</p>
+        </div>
+        <SoundSettingsCard onOpenEq={() => setEqOpen(true)} />
+        <EqualizerDialog open={eqOpen} onClose={() => setEqOpen(false)} />
+      </Card>
+
       <Card className="flex flex-col gap-5">
         <h2 className="text-lg font-extrabold">Оформление</h2>
         <Segmented<ThemeMode>
@@ -244,6 +255,27 @@ export default function ProfilePage() {
               {a.label}
             </button>
           ))}
+        </div>
+        <div className="flex flex-col gap-2">
+          <div className="text-[15px] font-bold">Анимация фона</div>
+          <Segmented<Motion>
+            label="Анимация фона"
+            value={theme.motion}
+            onChange={setMotion}
+            className="max-w-md"
+            options={[
+              { value: "smooth", label: "Плавная" },
+              { value: "eco", label: "Экономная" },
+              { value: "off", label: "Без анимации" },
+            ]}
+          />
+          <p className="text-[13px] text-muted">
+            {theme.motion === "smooth"
+              ? "60 кадров в секунду — красиво, но на ноутбуке греет видеокарту и тратит батарею."
+              : theme.motion === "eco"
+                ? "Фон сдвигается раз в секунду — движение медленное, на глаз почти так же, а нагрузка в 10 раз меньше."
+                : "Фон неподвижен."}
+          </p>
         </div>
         <div className="flex gap-2 text-faint">
           <Moon className="size-4" />

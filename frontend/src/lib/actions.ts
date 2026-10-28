@@ -98,3 +98,14 @@ export async function playRandom(genre?: string) {
     toast.error((err as Error).message);
   }
 }
+
+
+/** «Радио»: начать с трека (или исполнителя) и бесконечно продолжать похожими */
+export async function startRadio(seed: { track?: Track; artist_id?: number; label: string }) {
+  try {
+    await player.startRadio(seed);
+    toast.success(`Радио: ${seed.label}`);
+  } catch (err) {
+    toast.error((err as Error).message);
+  }
+}

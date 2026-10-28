@@ -236,14 +236,45 @@
     transform: none;
   }
 }
+/* Анимация фона. Под «стеклянными» панелями каждое изменение фона заставляет видеокарту заново
+   размывать почти весь экран — поэтому по умолчанию («экономно») фон сдвигается раз в секунду
+   (шаги незаметны: капли движутся очень медленно), волны стоят. «Плавно» — 60 кадров. */
 .animate-drift-a {
-  animation: drift-a 26s ease-in-out infinite;
+  animation: drift-a 26s steps(26) infinite;
 }
 .animate-drift-b {
-  animation: drift-b 32s ease-in-out infinite;
+  animation: drift-b 32s steps(32) infinite;
 }
 .animate-wave {
+  animation: none;
+}
+:root[data-motion="smooth"] .animate-drift-a {
+  animation: drift-a 26s ease-in-out infinite;
+}
+:root[data-motion="smooth"] .animate-drift-b {
+  animation: drift-b 32s ease-in-out infinite;
+}
+:root[data-motion="smooth"] .animate-wave {
   animation: wave 40s linear infinite;
+}
+/* Индикатор «играет сейчас» в экономном режиме не прыгает (иначе браузер рисует 60 кадров/с) */
+:root:not([data-motion="smooth"]) .eq-bar {
+  animation: none;
+}
+:root:not([data-motion="smooth"]) .eq-bar:nth-child(1) {
+  transform: scaleY(0.55);
+}
+:root:not([data-motion="smooth"]) .eq-bar:nth-child(2) {
+  transform: scaleY(1);
+}
+:root:not([data-motion="smooth"]) .eq-bar:nth-child(3) {
+  transform: scaleY(0.75);
+}
+:root[data-motion="off"] .animate-drift-a,
+:root[data-motion="off"] .animate-drift-b,
+:root[data-motion="off"] .animate-wave,
+:root[data-motion="off"] .eq-bar {
+  animation: none;
 }
 .animate-fade-in {
   animation: fade-in 0.22s ease-out both;

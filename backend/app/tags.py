@@ -40,6 +40,9 @@ class TrackMeta:
     channels: int = 2
     codec: str = ""
     has_cover: bool = False
+    # ReplayGain из тегов, дБ (относительно −18 LUFS); None — тегов нет
+    rg_track: float | None = None
+    rg_album: float | None = None
     extra: dict = field(default_factory=dict)
 
 
@@ -54,6 +57,8 @@ _ID3 = {
     "year": ["TDRC", "TYER", "TDOR", "TORY"],
     "genre": ["TCON"],
     "compilation": ["TCMP"],
+    "rg_track": ["TXXX:REPLAYGAIN_TRACK_GAIN", "TXXX:replaygain_track_gain"],
+    "rg_album": ["TXXX:REPLAYGAIN_ALBUM_GAIN", "TXXX:replaygain_album_gain"],
 }
 _MP4 = {
     "title": ["©nam"],
@@ -66,6 +71,8 @@ _MP4 = {
     "genre": ["©gen"],
     "compilation": ["cpil"],
     "lyrics": ["©lyr"],
+    "rg_track": ["----:com.apple.iTunes:replaygain_track_gain", "----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN"],
+    "rg_album": ["----:com.apple.iTunes:replaygain_album_gain", "----:com.apple.iTunes:REPLAYGAIN_ALBUM_GAIN"],
 }
 _VORBIS = {
     "title": ["title"],
@@ -78,6 +85,10 @@ _VORBIS = {
     "genre": ["genre"],
     "compilation": ["compilation"],
     "lyrics": ["lyrics", "unsyncedlyrics"],
+    "rg_track": ["replaygain_track_gain"],
+    "rg_album": ["replaygain_album_gain"],
+    "r128_track": ["r128_track_gain"],
+    "r128_album": ["r128_album_gain"],
 }
 _APE = {
     "title": ["Title"],
@@ -90,6 +101,8 @@ _APE = {
     "genre": ["Genre"],
     "compilation": ["Compilation"],
     "lyrics": ["Lyrics"],
+    "rg_track": ["REPLAYGAIN_TRACK_GAIN"],
+    "rg_album": ["REPLAYGAIN_ALBUM_GAIN"],
 }
 _ASF = {
     "title": ["Title"],
@@ -101,7 +114,26 @@ _ASF = {
     "year": ["WM/Year"],
     "genre": ["WM/Genre"],
     "lyrics": ["WM/Lyrics"],
+    "rg_track": ["REPLAYGAIN_TRACK_GAIN", "replaygain_track_gain"],
+    "rg_album": ["REPLAYGAIN_ALBUM_GAIN", "replaygain_album_gain"],
 }
+
+_GAIN = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
+
+
+def _gain(value, r128: bool = False) -> float | None:  # noqa: ANN001
+    """«-6.54 dB» → -6.54. R128 (Opus) — целое в 1/256 дБ относительно −23 LUFS → к шкале ReplayGain (−18)."""
+    text = _text(value)
+    m = _GAIN.search(text or "")
+    if not m:
+        return None
+    try:
+        v = float(m.group().replace(",", "."))
+    except ValueError:
+        return None
+    if r128:
+        v = v / 256 + 5
+    return v if -30 <= v <= 30 else None
 
 _NUM = re.compile(r"\d+")
 
@@ -261,6 +293,12 @@ def read_meta(path: Path) -> TrackMeta:
         meta.year = _year(get("year"))
         meta.genre = _text(get("genre"))[:128]
         meta.compilation = _bool(get("compilation"))
+        meta.rg_track = _gain(get("rg_track"))
+        if meta.rg_track is None and "r128_track" in mapping:
+            meta.rg_track = _gain(get("r128_track"), r128=True)
+        meta.rg_album = _gain(get("rg_album"))
+        if meta.rg_album is None and "r128_album" in mapping:
+            meta.rg_album = _gain(get("r128_album"), r128=True)
         if isinstance(tags, ID3):
             uslt = tags.getall("USLT")
             if uslt:

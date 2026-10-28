@@ -1017,12 +1017,23 @@ def get_similar_songs(c: Ctx) -> dict:
     else:
         track = c.visible_track(c.p.get("id") or "")
         artist_id, genre = track.artist_id, track.genre
-    query = tracks_query(c.libs())
-    if genre:
-        query = query.where((Track.genre == genre) | (Track.artist_id == artist_id))
-    elif artist_id:
-        query = query.where(Track.artist_id == artist_id)
-    tracks = list(c.db.scalars(query.order_by(func.random()).limit(count)))
+    # «Радио» в приложениях — тот же подбор похожих, что и в вебе
+    from .mixes import load_tracks  # noqa: PLC0415
+
+    ids = mixes.radio(
+        c.db, c.user,
+        track_id=num if kind == "tr" else None,
+        artist_id=artist_id if kind != "tr" else None,
+        count=count,
+    )
+    tracks = load_tracks(c.db, c.user, ids)
+    if not tracks:  # анализа ещё нет и жанров не хватило — по старинке
+        query = tracks_query(c.libs())
+        if genre:
+            query = query.where((Track.genre == genre) | (Track.artist_id == artist_id))
+        elif artist_id:
+            query = query.where(Track.artist_id == artist_id)
+        tracks = list(c.db.scalars(query.order_by(func.random()).limit(count)))
     return {key: {"song": c.songs(tracks)}}
 
 
