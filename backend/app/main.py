@@ -12,7 +12,8 @@ from . import scanner as _scanner  # noqa: F401 — регистрирует з�
 from .config import VERSION, settings
 from .limits import BodyLimitMiddleware
 from .media import ensure_dirs
-from .routers import admin, auth, library, profile, setup, shares, subsonic, uploads
+from . import analysis as _analysis  # noqa: F401 — фоновый анализ звука запускается после подключения БД
+from .routers import admin, auth, library, mixes, profile, setup, shares, subsonic, uploads
 
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
@@ -41,9 +42,11 @@ app.include_router(setup.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(profile.router)
+app.include_router(profile.avatar_router)
 app.include_router(library.router)
 app.include_router(uploads.router)
 app.include_router(shares.router)
+app.include_router(mixes.router)
 app.include_router(subsonic.router)
 
 

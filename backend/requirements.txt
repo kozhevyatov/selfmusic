@@ -10,3 +10,4 @@ pydantic==2.*
 python-multipart==0.0.*
 pillow==11.*
 mutagen==1.47.*
+numpy==2.*

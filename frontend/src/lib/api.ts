@@ -20,6 +20,8 @@ export type User = {
   upload_quota_mb: number;
   upload_max_files: number;
   can_share: boolean;
+  /** адрес аватарки или null — тогда показываем букву */
+  avatar: string | null;
   created_at: string;
   last_seen_at: string | null;
 };
@@ -313,6 +315,40 @@ export type PublicShare =
       size: number | null;
     };
 
+export type MixCard = {
+  key: string;
+  group: "time" | "mood" | "season" | "personal";
+  title: string;
+  subtitle: string;
+  icon: string;
+  colors: [string, string];
+  track_count: number;
+  duration: number;
+  covers: string[];
+  current: boolean;
+};
+export type MixDetail = MixCard & { tracks: Track[] };
+export type MixesOverview = {
+  now: MixCard | null;
+  season: MixCard | null;
+  groups: { key: string; title: string; items: MixCard[] }[];
+  analysis_ready: boolean;
+};
+export type AnalysisStatus = {
+  running: boolean;
+  current: string | null;
+  done_session: number;
+  last_error: string | null;
+  paused_reason: string;
+  enabled: boolean;
+  start: string;
+  end: string;
+  total: number;
+  analyzed: number;
+  failed: number;
+  forced: boolean;
+};
+
 export type FolderEntry = { name: string; path: string; track_count: number; covers: string[] };
 export type FolderView = {
   library: { id: number; name: string };
@@ -513,12 +549,25 @@ export const api = {
       request<TokenResponse>("/api/me/password", { method: "POST", body: json({ current_password, new_password }) }),
     appPassword: () => request<{ username: string; password: string | null }>("/api/me/app-password"),
     regenerateAppPassword: () => request<{ username: string; password: string }>("/api/me/app-password", { method: "POST" }),
+    uploadAvatar: (image: Blob) => {
+      const form = new FormData();
+      form.append("file", image, "avatar.jpg");
+      return request<User>("/api/me/avatar", { method: "POST", body: form });
+    },
+    deleteAvatar: () => request<User>("/api/me/avatar", { method: "DELETE" }),
     removeAppPassword: () => request<{ username: string; password: null }>("/api/me/app-password", { method: "DELETE" }),
   },
 
   library: {
     home: () => request<Home>("/api/home"),
     libraries: () => request<MyLibrary[]>("/api/libraries"),
+    mixes: () => request<MixesOverview>("/api/mixes"),
+    mix: (key: string) => request<MixDetail>(`/api/mixes/${key}`),
+    refreshMix: (key: string) => request<MixDetail>(`/api/mixes/${key}/refresh`, { method: "POST" }),
+    hideFromMix: (key: string, trackId: number) =>
+      request<{ ok: true }>(`/api/mixes/${key}/hide`, { method: "POST", body: json({ track_id: trackId }) }),
+    saveMix: (key: string, name = "") =>
+      request<{ id: number; name: string }>(`/api/mixes/${key}/save`, { method: "POST", body: json({ name }) }),
     browse: (libraryId: number, path = "") => request<FolderView>(`/api/libraries/${libraryId}/browse${qs({ path })}`),
     folderTracks: (libraryId: number, path = "") =>
       request<Track[]>(`/api/libraries/${libraryId}/folder-tracks${qs({ path })}`),
@@ -635,6 +684,11 @@ export const api = {
       request<{ ok: true }>(`/api/admin/users/${id}/password`, { method: "POST", body: json({ password }) }),
     deleteUser: (id: number) => request<{ ok: true }>(`/api/admin/users/${id}`, { method: "DELETE" }),
     libraries: () => request<AdminLibrary[]>("/api/admin/libraries"),
+    analysis: () => request<AnalysisStatus>("/api/admin/analysis"),
+    updateAnalysis: (data: { enabled?: boolean; start?: string; end?: string }) =>
+      request<AnalysisStatus>("/api/admin/analysis", { method: "PUT", body: json(data) }),
+    runAnalysis: () => request<AnalysisStatus>("/api/admin/analysis/run", { method: "POST" }),
+    stopAnalysis: () => request<AnalysisStatus>("/api/admin/analysis/stop", { method: "POST" }),
     createLibrary: (data: { name: string; path: string; default_access: boolean }) =>
       request<AdminLibrary>("/api/admin/libraries", { method: "POST", body: json(data) }),
     updateLibrary: (id: number, data: Partial<Pick<AdminLibrary, "name" | "path" | "enabled" | "default_access">>) =>

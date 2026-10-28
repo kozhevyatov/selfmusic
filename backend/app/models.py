@@ -56,6 +56,12 @@ class User(Base):
     upload_max_files: Mapped[int] = mapped_column(Integer, default=0)  # 0 — без лимита
     # Может создавать публичные ссылки (администратор — всегда)
     can_share: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 0 — нет аватарки; иначе номер версии (для сброса кэша в браузере)
+    avatar_version: Mapped[int] = mapped_column(Integer, default=0)
+
+    @property
+    def avatar(self) -> str | None:
+        return f"/api/avatar/{self.id}?v={self.avatar_version}" if self.avatar_version else None
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -292,3 +298,52 @@ class Share(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     owner: Mapped[User] = relationship(lazy="joined")
+
+
+# ---------------- подборки ----------------
+
+
+class TrackFeature(Base):
+    """Результат анализа звука трека (для подборок по времени суток и настроению)."""
+
+    __tablename__ = "track_features"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    mtime: Mapped[float] = mapped_column(Double, default=0)  # mtime файла на момент анализа
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    bpm: Mapped[float] = mapped_column(Float, default=0)
+    loudness: Mapped[float] = mapped_column(Float, default=0)
+    dynamics: Mapped[float] = mapped_column(Float, default=0)
+    centroid: Mapped[float] = mapped_column(Float, default=0)
+    onset_rate: Mapped[float] = mapped_column(Float, default=0)
+    pulse: Mapped[float] = mapped_column(Float, default=0)
+    mode: Mapped[float] = mapped_column(Float, default=0)
+    musical_key: Mapped[str] = mapped_column(String(4), default="")
+    energy: Mapped[float] = mapped_column(Float, default=0.5)
+    valence: Mapped[float] = mapped_column(Float, default=0.5)
+
+
+class UserMix(Base):
+    """Подборка пользователя на конкретный день (чтобы в течение дня она не «прыгала»)."""
+
+    __tablename__ = "user_mixes"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD по времени сервера
+    seed: Mapped[int] = mapped_column(Integer, default=0)
+    track_ids: Mapped[str] = mapped_column(LongText, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MixFeedback(Base):
+    """«Не подходит для этой подборки» — трек больше не предлагается в ней."""
+
+    __tablename__ = "mix_feedback"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

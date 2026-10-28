@@ -1,3 +1,4 @@
+import { NowMixHero } from "@/pages/MixesPage";
 import { ArtistCard, AlbumCard, CardGrid } from "@/components/Cards";
 import { Cover } from "@/components/Cover";
 import { PlayFill } from "@/components/icon";
@@ -71,6 +72,7 @@ export default function HomePage() {
   const { user } = useAuth();
   const home = useQuery(["home"], api.library.home, { staleTime: 60_000 });
   const libs = useQuery(["libraries"], api.library.libraries, { staleTime: 60_000 });
+  const mixes = useQuery(["mixes"], api.library.mixes, { staleTime: 5 * 60_000 });
   const name = user?.display_name || user?.username;
 
   if (home.isLoading) return <PageLoader />;
@@ -116,6 +118,8 @@ export default function HomePage() {
         </button>
       </div>
 
+      {mixes.data?.now && <NowMixHero mix={mixes.data.now} season={mixes.data.season} />}
+
       <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
         <ContinueCard fallback={d.random_albums[0]} />
         <div className="glass flex flex-col gap-4 rounded-3xl border p-6">
@@ -139,7 +143,7 @@ export default function HomePage() {
           </div>
           <div className="flex flex-col gap-2">
             {(libs.data ?? []).slice(0, 4).map((l) => (
-              <Link key={l.id} to={`/albums?library=${l.id}`} className="flex items-center gap-3 rounded-xl p-1.5 hover:bg-surface-2/60">
+              <Link key={l.id} to={`/folders/${l.id}`} className="flex items-center gap-3 rounded-xl p-1.5 hover:bg-surface-2/60">
                 <span className="flex size-10 items-center justify-center rounded-xl bg-surface-2 text-accent-ink">
                   <Folder className="size-5" />
                 </span>

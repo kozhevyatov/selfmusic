@@ -49,8 +49,18 @@ export function Cover({
   );
 }
 
-export function Avatar({ name, className }: { name: string; className?: string }) {
+export function Avatar({ name, src, className }: { name: string; src?: string | null; className?: string }) {
   const h = hueOf(name);
+  if (src)
+    return (
+      <img
+        src={src}
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        className={cn("inline-block size-10 shrink-0 rounded-full bg-surface-2 object-cover", className)}
+      />
+    );
   return (
     <span
       aria-hidden="true"

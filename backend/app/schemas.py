@@ -71,6 +71,7 @@ class UserOut(BaseModel):
     upload_quota_mb: int
     upload_max_files: int
     can_share: bool
+    avatar: str | None = None
     created_at: datetime
     last_seen_at: datetime | None = None
 

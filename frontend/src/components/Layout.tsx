@@ -23,6 +23,7 @@ import {
   Search,
   Settings,
   Shield,
+  Sparkles,
   Sun,
   Upload,
   User,
@@ -34,6 +35,7 @@ import { Menu } from "./ui/menu";
 const NAV = [
   { to: "/", label: "Главная", icon: House },
   { to: "/search", label: "Поиск", icon: Search },
+  { to: "/mixes", label: "Подборки", icon: Sparkles },
   { to: "/albums", label: "Альбомы", icon: Disc3 },
   { to: "/artists", label: "Исполнители", icon: MicVocal },
   { to: "/playlists", label: "Плейлисты", icon: ListMusic },
@@ -81,7 +83,7 @@ function UserMenu({ compact = false }: { compact?: boolean }) {
             compact ? "p-0.5" : "w-full p-1.5 pr-3 text-left",
           )}
         >
-          <Avatar name={name} className={compact ? "size-9 text-sm" : "size-9 text-sm"} />
+          <Avatar name={name} src={user.avatar} className="size-9 text-sm" />
           {!compact && (
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-bold">{name}</span>
@@ -201,7 +203,7 @@ function MobileHeader() {
 
 function TabBar() {
   const { pathname } = useLocation();
-  const libraryPaths = ["/library", "/albums", "/artists", "/favorites", "/folders", "/upload", "/shares"];
+  const libraryPaths = ["/library", "/mixes", "/albums", "/artists", "/favorites", "/folders", "/upload", "/shares"];
   return (
     <nav
       aria-label="Разделы"

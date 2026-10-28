@@ -24,6 +24,8 @@ import PlaylistPage from "@/pages/PlaylistPage";
 import FavoritesPage from "@/pages/FavoritesPage";
 import FoldersPage from "@/pages/FoldersPage";
 import FolderPage from "@/pages/FolderPage";
+import MixesPage from "@/pages/MixesPage";
+import MixPage from "@/pages/MixPage";
 import UploadPage from "@/pages/UploadPage";
 import ProfilePage from "@/pages/ProfilePage";
 import AdminPage from "@/pages/AdminPage";
@@ -91,6 +93,8 @@ export default function App() {
           { path: "/playlists", element: <PlaylistsPage /> },
           { path: "/playlists/:id", element: <PlaylistPage /> },
           { path: "/favorites", element: <FavoritesPage /> },
+          { path: "/mixes", element: <MixesPage /> },
+          { path: "/mixes/:key", element: <MixPage /> },
           { path: "/folders", element: <FoldersPage /> },
           { path: "/folders/:id", element: <FolderPage /> },
           { path: "/upload", element: <UploadPage /> },

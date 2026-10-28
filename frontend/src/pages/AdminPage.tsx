@@ -33,6 +33,93 @@ type Tab = "users" | "libraries" | "general";
 
 // ---------------- общие ----------------
 
+const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
+
+/** Анализ звука для подборок: включение, часы работы, прогресс. */
+function AnalysisCard() {
+  const q = useQuery(["admin", "analysis"], api.admin.analysis, { refetchInterval: 3000, staleTime: 0 });
+  const a = q.data;
+  if (!a) return null;
+  const set = async (patch: { enabled?: boolean; start?: string; end?: string }) => {
+    try {
+      await api.admin.updateAnalysis(patch);
+      invalidate(["admin", "analysis"]);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+  const pct = a.total ? Math.round(((a.analyzed + a.failed) / a.total) * 100) : 0;
+  const left = Math.max(0, a.total - a.analyzed - a.failed);
+  const allDay = a.start === a.end;
+  return (
+    <Card className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <div className="text-[16px] font-extrabold">Анализ звука для подборок</div>
+          <p className="mt-1 text-sm text-muted">
+            Сервер один раз «прослушивает» каждый трек: темп, энергия, лад. Работает с самым низким приоритетом и только в
+            выбранные часы, чтобы не мешать.
+          </p>
+        </div>
+        <Switch label="Анализ звука" checked={a.enabled} onChange={(v) => set({ enabled: v })} />
+      </div>
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <span className="text-muted">Работать с</span>
+        <div className="w-28">
+          <Select aria-label="Начало" value={a.start} onChange={(e) => set({ start: e.target.value })} disabled={!a.enabled}>
+            {HOURS.map((h) => (
+              <option key={h}>{h}</option>
+            ))}
+          </Select>
+        </div>
+        <span className="text-muted">до</span>
+        <div className="w-28">
+          <Select aria-label="Конец" value={a.end} onChange={(e) => set({ end: e.target.value })} disabled={!a.enabled}>
+            {HOURS.map((h) => (
+              <option key={h}>{h}</option>
+            ))}
+          </Select>
+        </div>
+        {allDay && <span className="text-faint">— круглосуточно</span>}
+      </div>
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+          <span>
+            Проанализировано <b>{a.analyzed.toLocaleString("ru-RU")}</b> из {a.total.toLocaleString("ru-RU")}
+            {a.failed > 0 && <span className="text-faint"> · не удалось: {a.failed}</span>}
+          </span>
+          <span className="text-faint">{pct}%</span>
+        </div>
+        <Progress value={pct} />
+        <div className="truncate text-[13px] text-faint">
+          {a.running ? `Сейчас: ${a.current ?? "…"}` : left > 0 ? a.paused_reason || "Ожидает" : "Все треки проанализированы"}
+        </div>
+      </div>
+      {left > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {a.forced ? (
+            <Button variant="secondary" onClick={() => api.admin.stopAnalysis().then(() => invalidate(["admin", "analysis"]))}>
+              Вернуться к расписанию
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              onClick={() =>
+                api.admin.runAnalysis().then(() => {
+                  invalidate(["admin", "analysis"]);
+                  toast.success("Анализ запущен — до конца очереди, с низким приоритетом");
+                })
+              }
+            >
+              Анализировать сейчас
+            </Button>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function GeneralTab() {
   const s = useQuery(["admin", "settings"], api.admin.settings);
   const [name, setName] = useState("");
@@ -121,6 +208,7 @@ function GeneralTab() {
           </Select>
         </div>
       </Card>
+      <AnalysisCard />
     </div>
   );
 }
@@ -400,7 +488,7 @@ function UserDetail({ user, libs, me }: { user: AdminUser; libs: AdminLibrary[];
   return (
     <Card className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-4">
-        <Avatar name={user.display_name || user.username} className="size-14 text-xl" />
+        <Avatar name={user.display_name || user.username} src={user.avatar} className="size-14 text-xl" />
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-xl font-extrabold">{user.display_name || user.username}</h2>
           <div className="truncate text-sm text-muted">
@@ -728,7 +816,7 @@ function UsersTab() {
               aria-pressed={current?.id === u.id}
               className={cn("flex items-center gap-3 rounded-2xl p-3 text-left transition", current?.id === u.id ? "bg-surface-2" : "hover:bg-surface-2/60")}
             >
-              <Avatar name={u.display_name || u.username} />
+              <Avatar name={u.display_name || u.username} src={u.avatar} />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-1.5 truncate font-bold">
                   {u.display_name || u.username}

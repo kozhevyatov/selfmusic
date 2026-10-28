@@ -24,7 +24,7 @@ import {
 
 export function trackMenuItems(
   track: Track,
-  opts: { onRemoveFromPlaylist?: () => void; canEdit?: boolean; hideAlbum?: boolean; canShare?: boolean } = {},
+  opts: { onRemoveFromPlaylist?: () => void; removeLabel?: string; canEdit?: boolean; hideAlbum?: boolean; canShare?: boolean } = {},
 ): MenuItem[] {
   const items: MenuItem[] = [
     { label: "Играть следующим", icon: <ListStart />, onSelect: () => queueTracks([track], true) },
@@ -60,7 +60,7 @@ export function trackMenuItems(
   });
   if (opts.canEdit || track.can_delete) items.push({ label: "Редактировать теги", icon: <Pencil />, onSelect: () => dialogs.editTags(track.id) });
   if (opts.onRemoveFromPlaylist) {
-    items.push({ separator: true }, { label: "Убрать из плейлиста", icon: <X />, onSelect: opts.onRemoveFromPlaylist });
+    items.push({ separator: true }, { label: opts.removeLabel ?? "Убрать из плейлиста", icon: <X />, onSelect: opts.onRemoveFromPlaylist });
   }
   if (track.can_delete) {
     items.push(

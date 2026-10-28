@@ -34,6 +34,7 @@ type RowProps = {
   canEdit?: boolean;
   onPlay: (i: number) => void;
   onRemove?: (t: Track) => void;
+  removeLabel?: string;
   selecting?: boolean;
   selected?: boolean;
   onSelect?: (i: number) => void;
@@ -50,6 +51,7 @@ const Row = memo(function Row({
   canEdit,
   onPlay,
   onRemove,
+  removeLabel,
   selecting,
   selected,
   onSelect,
@@ -176,7 +178,7 @@ const Row = memo(function Row({
           {track.starred ? <HeartFill className="size-[18px]" /> : <Heart className="size-[18px]" />}
         </button>
         <span className="num hidden w-11 text-right text-sm text-muted sm:block">{formatTime(track.duration)}</span>
-        <TrackMenuButton track={track} canEdit={canEdit} onRemoveFromPlaylist={onRemove ? () => onRemove(track) : undefined} />
+        <TrackMenuButton track={track} canEdit={canEdit} removeLabel={removeLabel} onRemoveFromPlaylist={onRemove ? () => onRemove(track) : undefined} />
       </div>
     </div>
   );
@@ -191,6 +193,7 @@ export function TrackList({
   discs = false,
   canEdit,
   onRemove,
+  removeLabel,
   selectable = false,
   className,
 }: {
@@ -201,6 +204,8 @@ export function TrackList({
   discs?: boolean;
   canEdit?: boolean;
   onRemove?: (t: Track) => void;
+  /** Подпись пункта меню для onRemove (по умолчанию «Убрать из плейлиста») */
+  removeLabel?: string;
   /** Можно выбрать несколько треков галочками (поделиться, в плейлист, в очередь) */
   selectable?: boolean;
   className?: string;
@@ -321,6 +326,7 @@ export function TrackList({
               canEdit={canEdit}
               onPlay={onPlay}
               onRemove={onRemove}
+              removeLabel={removeLabel}
               selecting={selecting}
               selected={selected.has(i)}
               onSelect={onSelect}

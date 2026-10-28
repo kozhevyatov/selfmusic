@@ -1,11 +1,17 @@
 """Личный кабинет: имя, email, пароль, качество потока, пароль для приложений."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+import io
+import time
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse
+from PIL import Image, ImageOps
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import ratelimit
+from ..config import DATA_DIR
 from ..db import get_db
 from ..models import User
 from ..schemas import PasswordChange, ProfileUpdate, TokenOut, UserOut
@@ -16,6 +22,7 @@ from ..security import (
     encrypt_secret,
     generate_app_password,
     get_current_user,
+    get_media_user,
     hash_password,
     verify_password,
 )
@@ -97,3 +104,55 @@ def remove_app_password(db: Session = Depends(get_db), user: User = Depends(get_
     user.subsonic_password = None
     db.commit()
     return {"username": user.username, "password": None}
+
+
+# ---------------- аватарка ----------------
+
+AVATAR_DIR = DATA_DIR / "avatars"
+AVATAR_SIZE = 512
+
+
+def avatar_file(user_id: int):  # noqa: ANN201
+    return AVATAR_DIR / f"u{user_id}.webp"
+
+
+@router.post("/avatar", response_model=UserOut)
+def upload_avatar(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> User:
+    """Картинку обрезает в квадрат браузер; здесь — проверка, страховочная обрезка по центру и WebP 512×512."""
+    data = file.file.read(15 * 1024 * 1024 + 1)
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(413, "Картинка больше 15 МБ")
+    try:
+        img = Image.open(io.BytesIO(data))
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        img = ImageOps.fit(img, (AVATAR_SIZE, AVATAR_SIZE), Image.LANCZOS)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(415, "Это не картинка")
+    AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = AVATAR_DIR / f".u{user.id}.{time.time_ns()}.tmp"
+    img.save(tmp, "WEBP", quality=88, method=4)
+    tmp.replace(avatar_file(user.id))
+    user.avatar_version = int(time.time())
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.delete("/avatar", response_model=UserOut)
+def delete_avatar(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> User:
+    avatar_file(user.id).unlink(missing_ok=True)
+    user.avatar_version = 0
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+avatar_router = APIRouter(tags=["profile"])
+
+
+@avatar_router.get("/api/avatar/{user_id}")
+def get_avatar(user_id: int, _: User = Depends(get_media_user)) -> FileResponse:
+    path = avatar_file(user_id)
+    if not path.is_file():
+        raise HTTPException(404, "Аватарки нет")
+    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "private, max-age=31536000, immutable"})

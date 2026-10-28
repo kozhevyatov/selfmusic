@@ -1,5 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { Check, Copy, Eye, EyeOff, KeyRound, LoaderCircle, LogOut, Monitor, Moon, RefreshCw, Smartphone, Sun } from "@/components/icons";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { AvatarCropper } from "@/components/AvatarCropper";
+import { Avatar } from "@/components/Cover";
+import { Check, Copy, Eye, EyeOff, Image as ImageIcon, KeyRound, LoaderCircle, LogOut, Monitor, Moon, RefreshCw, Smartphone, Sun, Trash } from "@/components/icons";
 import { PageHeader } from "@/components/Section";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
@@ -106,6 +108,63 @@ function AppAccess() {
   );
 }
 
+function AvatarCard() {
+  const { user } = useAuth();
+  const input = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  if (!user) return null;
+  const name = user.display_name || user.username;
+  const remove = async () => {
+    try {
+      updateCurrentUser(await api.me.deleteAvatar());
+      toast.success("Аватарка удалена");
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+  return (
+    <Card className="flex flex-wrap items-center gap-5">
+      <Avatar name={name} src={user.avatar} className="size-24 text-4xl" />
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <div>
+          <h2 className="text-lg font-extrabold">Аватарка</h2>
+          <p className="text-sm text-muted">JPG, PNG или WebP. Обрежем в квадрат — выберите нужную часть.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={() => input.current?.click()}>
+            <ImageIcon className="size-4" /> {user.avatar ? "Заменить" : "Загрузить фото"}
+          </Button>
+          {user.avatar && (
+            <Button variant="ghost" onClick={remove}>
+              <Trash className="size-4" /> Удалить
+            </Button>
+          )}
+        </div>
+      </div>
+      <input
+        ref={input}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) setFile(f);
+        }}
+      />
+      <AvatarCropper
+        file={file}
+        onCancel={() => setFile(null)}
+        onDone={async (blob) => {
+          updateCurrentUser(await api.me.uploadAvatar(blob));
+          setFile(null);
+          toast.success("Аватарка обновлена");
+        }}
+      />
+    </Card>
+  );
+}
+
 export default function ProfilePage() {
   const { user, logout } = useAuth();
   const theme = useTheme();
@@ -154,6 +213,8 @@ export default function ProfilePage() {
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <PageHeader title="Профиль" subtitle={`${user.username}${user.is_admin ? " · администратор" : ""}`} />
+
+      <AvatarCard />
 
       <Card className="flex flex-col gap-5">
         <h2 className="text-lg font-extrabold">Оформление</h2>

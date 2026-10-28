@@ -26,7 +26,7 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from .. import db as dbmod
-from .. import ratelimit
+from .. import mixes, ratelimit
 from ..access import allowed_library_ids
 from ..config import VERSION
 from ..media import content_type, cover_path, file_response, image_response, placeholder_cover, stream_track, track_file
@@ -827,6 +827,31 @@ def _append(c: Ctx, pl: Playlist, raw_ids: list[str]) -> None:
     pl.updated_at = datetime.now(timezone.utc)
 
 
+# Подборки видны приложениям как плейлисты только для чтения: id «mx-<ключ>»
+def _mix_playlist(c: Ctx, key: str, tracks: list[Track]) -> dict:
+    m = mixes.BY_KEY[key]
+    now = datetime.now(timezone.utc)
+    return {
+        "id": f"mx-{key}",
+        "name": f"✦ {m.title}",
+        "comment": f"Подборка SelfMusic: {m.subtitle}. Обновляется каждый день.",
+        "owner": c.user.username,
+        "public": False,
+        "readonly": True,
+        "songCount": len(tracks),
+        "duration": int(sum(t.duration for t in tracks)),
+        "created": _iso(now),
+        "changed": _iso(now),
+        "coverArt": f"al-{tracks[0].album_id}" if tracks else None,
+    }
+
+
+def _mix_tracks(c: Ctx, key: str) -> list[Track]:
+    from .mixes import load_tracks  # noqa: PLC0415
+
+    return load_tracks(c.db, c.user, mixes.get_mix(c.db, c.user, key))
+
+
 @method("getPlaylists")
 def get_playlists(c: Ctx) -> dict:
     pls = c.db.scalars(
@@ -834,12 +859,27 @@ def get_playlists(c: Ctx) -> dict:
         .where((Playlist.owner_id == c.user.id) | Playlist.is_public.is_(True))
         .order_by(desc(Playlist.updated_at))
     )
-    return {"playlists": {"playlist": [_playlist(c, pl) for pl in pls]}}
+    items = []
+    cache: dict = {}
+    for key in mixes.subsonic_keys():
+        try:
+            ids = mixes.get_mix(c.db, c.user, key, cache)
+        except Exception:  # noqa: BLE001 — подборки не должны ломать список плейлистов
+            break
+        if len(ids) >= 8:
+            items.append(_mix_playlist(c, key, _mix_tracks(c, key)))
+    return {"playlists": {"playlist": items + [_playlist(c, pl) for pl in pls]}}
 
 
 @method("getPlaylist")
 def get_playlist(c: Ctx) -> dict:
-    pl = _get_pl(c, c.p.req("id"))
+    raw = c.p.req("id")
+    if raw.startswith("mx-") and raw[3:] in mixes.BY_KEY:
+        tracks = _mix_tracks(c, raw[3:])
+        data = _mix_playlist(c, raw[3:], tracks)
+        data["entry"] = c.songs(tracks)
+        return {"playlist": data}
+    pl = _get_pl(c, raw)
     tracks = _playlist_tracks(c, pl)
     data = _playlist(c, pl, tracks)
     data["entry"] = c.songs(tracks)
@@ -1194,7 +1234,22 @@ def _cover(c: Ctx) -> Response:
     )
 
 
-BINARY = {"stream": lambda c: _stream(c), "download": lambda c: _stream(c, raw=True), "getcoverart": _cover}
+def _avatar(c: Ctx) -> Response:
+    from .profile import avatar_file  # noqa: PLC0415
+
+    name = c.p.get("username") or c.user.username
+    target = c.db.scalar(select(User).where(User.username == name))
+    if target is None or not target.avatar_version or not avatar_file(target.id).is_file():
+        return Response(placeholder_cover(name, 256), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+    return image_response(avatar_file(target.id))
+
+
+BINARY = {
+    "stream": lambda c: _stream(c),
+    "download": lambda c: _stream(c, raw=True),
+    "getcoverart": _cover,
+    "getavatar": _avatar,
+}
 
 
 # ---------------- маршрутизация ----------------

@@ -13,6 +13,10 @@ DEFAULTS: dict[str, str] = {
     "scan_interval": "60",
     # Внешний адрес сервиса (https://music.example.ru) — для публичных ссылок
     "public_url": "",
+    # Анализ звука для подборок: включён, работает только в эти часы (время контейнера)
+    "analysis_enabled": "1",
+    "analysis_start": "01:00",
+    "analysis_end": "07:00",
 }
 
 

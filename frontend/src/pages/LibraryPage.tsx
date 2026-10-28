@@ -1,4 +1,4 @@
-import { ChevronRight, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Upload } from "@/components/icons";
+import { ChevronRight, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Sparkles, Upload } from "@/components/icons";
 import { PageHeader } from "@/components/Section";
 import { useAuth } from "@/lib/auth";
 import { Link } from "@/lib/router";
@@ -7,6 +7,7 @@ import { Link } from "@/lib/router";
 export default function LibraryPage() {
   const { user } = useAuth();
   const items = [
+    { to: "/mixes", label: "Подборки", icon: Sparkles },
     { to: "/albums", label: "Альбомы", icon: Disc3 },
     { to: "/artists", label: "Исполнители", icon: MicVocal },
     { to: "/favorites", label: "Избранное", icon: Heart },
