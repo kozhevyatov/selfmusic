@@ -313,6 +313,19 @@ export type PublicShare =
       size: number | null;
     };
 
+export type FolderEntry = { name: string; path: string; track_count: number; covers: string[] };
+export type FolderView = {
+  library: { id: number; name: string };
+  path: string;
+  name: string;
+  crumbs: { name: string; path: string }[];
+  folders: FolderEntry[];
+  tracks: Track[];
+  total_tracks: number;
+  total_duration: number;
+  total_size: number;
+};
+
 export type LibraryDirs = { library: { id: number; name: string }; path: string; dirs: string[]; track_count: number };
 
 export class ApiError extends Error {
@@ -506,6 +519,9 @@ export const api = {
   library: {
     home: () => request<Home>("/api/home"),
     libraries: () => request<MyLibrary[]>("/api/libraries"),
+    browse: (libraryId: number, path = "") => request<FolderView>(`/api/libraries/${libraryId}/browse${qs({ path })}`),
+    folderTracks: (libraryId: number, path = "") =>
+      request<Track[]>(`/api/libraries/${libraryId}/folder-tracks${qs({ path })}`),
     albums: (p: { sort?: string; library?: number; genre?: string; q?: string; offset?: number; limit?: number } = {}) =>
       request<{ items: Album[]; total: number }>(`/api/albums${qs(p)}`),
     album: (id: number) => request<AlbumDetail>(`/api/albums/${id}`),

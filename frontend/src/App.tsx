@@ -23,6 +23,7 @@ import PlaylistsPage from "@/pages/PlaylistsPage";
 import PlaylistPage from "@/pages/PlaylistPage";
 import FavoritesPage from "@/pages/FavoritesPage";
 import FoldersPage from "@/pages/FoldersPage";
+import FolderPage from "@/pages/FolderPage";
 import UploadPage from "@/pages/UploadPage";
 import ProfilePage from "@/pages/ProfilePage";
 import AdminPage from "@/pages/AdminPage";
@@ -91,6 +92,7 @@ export default function App() {
           { path: "/playlists/:id", element: <PlaylistPage /> },
           { path: "/favorites", element: <FavoritesPage /> },
           { path: "/folders", element: <FoldersPage /> },
+          { path: "/folders/:id", element: <FolderPage /> },
           { path: "/upload", element: <UploadPage /> },
           { path: "/shares", element: <SharesPage /> },
           { path: "/profile", element: <ProfilePage /> },

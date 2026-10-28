@@ -18,7 +18,7 @@ export default function FoldersPage() {
     <div className="flex flex-col gap-7">
       <PageHeader
         title="Папки"
-        subtitle="Папки с музыкой, которые вам открыты"
+        subtitle="Слушайте музыку так, как она лежит на диске — по папкам и подпапкам"
         actions={
           user?.is_admin && (
             <Link to="/admin?tab=libraries" className={buttonClass("secondary")}>
@@ -35,7 +35,7 @@ export default function FoldersPage() {
       <div className="grid gap-4 sm:[grid-template-columns:repeat(auto-fill,minmax(300px,1fr))]">
         {libs.data?.map((l) => (
           <div key={l.id} className="glass flex flex-col gap-4 rounded-3xl border p-5 transition hover:border-accent/40">
-            <Link to={`/albums?library=${l.id}`} className="flex gap-4">
+            <Link to={`/folders/${l.id}`} className="flex gap-4">
               <span className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-surface-2 text-accent-ink">
                 <Folder className="size-7" />
               </span>

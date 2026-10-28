@@ -82,6 +82,109 @@ def my_libraries(db: Session = Depends(get_db), user: User = Depends(get_current
     ]
 
 
+# ---------------- просмотр по папкам (как «Папки» в DS Audio) ----------------
+
+
+def _folder_scope(db: Session, user: User, library_id: int, path: str) -> tuple[Library, str]:
+    lib = db.get(Library, library_id)
+    if not lib or not lib.enabled or lib.id not in allowed_library_ids(db, user):
+        raise HTTPException(404, "Папка не найдена")
+    rel = "/".join(p for p in path.replace("\\", "/").split("/") if p and p not in (".", ".."))
+    return lib, rel
+
+
+def _like_folder(rel: str) -> str:
+    return rel.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_") + "/%"
+
+
+def _in_folder(query, rel: str):  # noqa: ANN001, ANN202
+    return query.where(Track.path.like(_like_folder(rel), escape="\\")) if rel else query
+
+
+@router.get("/libraries/{library_id}/browse")
+def browse_folder(
+    library_id: int, path: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict:
+    """Содержимое папки: подпапки (по проиндексированным трекам) и треки, лежащие прямо в ней."""
+    lib, rel = _folder_scope(db, user, library_id, path)
+    prefix = f"{rel}/" if rel else ""
+    rows = db.execute(
+        _in_folder(select(Track.path, Track.album_id, Track.duration, Track.size).where(Track.library_id == lib.id), rel)
+    ).all()
+    dirs: dict[str, dict] = {}
+    direct_paths: list[str] = []
+    total_duration = total_size = 0
+    for track_path, album_id, duration, size in rows:
+        if not track_path.startswith(prefix):  # LIKE без учёта регистра — отсекаем «похожие» папки
+            continue
+        total_duration += duration or 0
+        total_size += size or 0
+        rest = track_path[len(prefix):]
+        if "/" not in rest:
+            direct_paths.append(track_path)
+            continue
+        name = rest.split("/", 1)[0]
+        d = dirs.setdefault(name, {"name": name, "path": prefix + name, "track_count": 0, "albums": []})
+        d["track_count"] += 1
+        if album_id not in d["albums"] and len(d["albums"]) < 4:
+            d["albums"].append(album_id)
+    if rel and not rows:
+        raise HTTPException(404, "В этой папке нет музыки")
+
+    album_ids = {a for d in dirs.values() for a in d["albums"]}
+    albums = {a.id: a for a in db.scalars(select(Album).where(Album.id.in_(album_ids or [-1])))}
+    folders = []
+    for d in sorted(dirs.values(), key=lambda d: d["name"].lower()):
+        covers = [cover_url(albums.get(a)) for a in d["albums"]]
+        folders.append(
+            {"name": d["name"], "path": d["path"], "track_count": d["track_count"], "covers": [c for c in covers if c][:4]}
+        )
+
+    tracks: list[Track] = []
+    if direct_paths:
+        tracks = list(
+            db.scalars(
+                select(Track)
+                .where(Track.library_id == lib.id, Track.path.in_(direct_paths[:2000]))
+                .order_by(func.coalesce(Track.disc_no, 1), func.coalesce(Track.track_no, 9999), Track.path)
+            )
+        )
+    crumbs = []
+    acc = ""
+    for part in rel.split("/") if rel else []:
+        acc = f"{acc}/{part}" if acc else part
+        crumbs.append({"name": part, "path": acc})
+    return {
+        "library": {"id": lib.id, "name": lib.name},
+        "path": rel,
+        "name": rel.rsplit("/", 1)[-1] if rel else lib.name,
+        "crumbs": crumbs,
+        "folders": folders,
+        "tracks": tracks_out(db, user.id, tracks),
+        "total_tracks": sum(1 for r in rows if r[0].startswith(prefix)),
+        "total_duration": int(total_duration),
+        "total_size": int(total_size),
+    }
+
+
+@router.get("/libraries/{library_id}/folder-tracks")
+def folder_tracks(
+    library_id: int,
+    path: str = "",
+    limit: int = Query(3000, ge=1, le=10000),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    """Все треки папки вместе с подпапками — для «Слушать всё» и «Перемешать»."""
+    lib, rel = _folder_scope(db, user, library_id, path)
+    prefix = f"{rel}/" if rel else ""
+    q = _in_folder(select(Track).where(Track.library_id == lib.id), rel).order_by(Track.path).limit(limit)
+    tracks = [t for t in db.scalars(q) if t.path.startswith(prefix)]
+    # внутри одной папки — по номеру трека, папки — по алфавиту
+    tracks.sort(key=lambda t: (t.path.rsplit("/", 1)[0].lower() if "/" in t.path else "", t.disc_no or 1, t.track_no or 9999, t.path))
+    return tracks_out(db, user.id, tracks)
+
+
 @router.get("/home")
 def home(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     ids = _libs(db, user)

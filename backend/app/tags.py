@@ -106,6 +106,29 @@ _ASF = {
 _NUM = re.compile(r"\d+")
 
 
+def fix_encoding(text: str) -> str:
+    """Старые MP3: русские теги в Windows-1251, помеченные как Latin-1 → «Ñèëà ðèôìîâàííûõ».
+
+    Перекодируем, только если строка целиком укладывается в Latin-1 и в ней большинство
+    букв — из верхней половины таблицы (так выглядит кириллица в cp1251). «Beyoncé»,
+    «Mötley Crüe», «Señor» с одной-двумя такими буквами не трогаем.
+    """
+    if not text or text.isascii():
+        return text
+    try:
+        raw = text.encode("latin-1")
+    except UnicodeEncodeError:
+        return text  # уже нормальный Unicode (кириллица, иероглифы и т. п.)
+    high = sum(1 for ch in text if "\xc0" <= ch <= "\xff")
+    letters = sum(1 for ch in text if ch.isalpha())
+    if high < 2 or high < letters * 0.5:
+        return text
+    try:
+        return raw.decode("cp1251")
+    except UnicodeDecodeError:
+        return text
+
+
 def _text(value) -> str:  # noqa: ANN001
     if value is None:
         return ""
@@ -118,8 +141,11 @@ def _text(value) -> str:  # noqa: ANN001
     if hasattr(value, "text"):  # фреймы ID3
         return _text(value.text)
     if isinstance(value, bytes):
-        return value.decode("utf-8", "replace").strip("\x00 ").strip()
-    return str(value).strip("\x00 ").strip()
+        try:
+            return value.decode("utf-8").strip("\x00 ").strip()
+        except UnicodeDecodeError:
+            return value.decode("cp1251", "replace").strip("\x00 ").strip()
+    return fix_encoding(str(value).strip("\x00 ").strip())
 
 
 def _int(value) -> int | None:  # noqa: ANN001
@@ -232,7 +258,7 @@ def read_meta(path: Path) -> TrackMeta:
         if isinstance(tags, ID3):
             uslt = tags.getall("USLT")
             if uslt:
-                meta.lyrics = str(uslt[0].text).strip() or None
+                meta.lyrics = fix_encoding(str(uslt[0].text).strip()) or None
         elif "lyrics" in mapping:
             meta.lyrics = _text(get("lyrics")) or None
         meta.has_cover = _has_picture(audio)

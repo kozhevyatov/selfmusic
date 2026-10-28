@@ -20,7 +20,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from . import db as dbmod
-from .app_settings import get_setting
+from .app_settings import get_setting, set_setting
 from .models import Album, Artist, Library, Play, PlaylistEntry, Star, Track, Upload
 from .tags import TrackMeta, read_meta
 
@@ -38,6 +38,9 @@ DISC_DIR = re.compile(r"^(cd|disc|disk|диск|диск\s*№?)\s*[-_.]?\s*\d+\
 VARIOUS = "Разные исполнители"
 UNKNOWN_ARTIST = "Неизвестный исполнитель"
 BATCH = 200
+# Меняется, когда меняется само чтение тегов (например, исправление кодировки cp1251).
+# При запуске с новой версией один раз выполняется полное пересканирование.
+INDEX_VERSION = "2"
 COMMIT_EVERY = 2.0  # сек: не держим запись в SQLite дольше — веб-запросы ждут
 LYRICS_MAX = 100_000
 
@@ -290,7 +293,18 @@ class Scanner:
 
     def _schedule_loop(self) -> None:
         time.sleep(5)
-        self.start()  # быстрая инкрементальная проверка при запуске
+        full = False
+        try:
+            with dbmod.session_scope() as db:
+                if get_setting(db, "index_version") != INDEX_VERSION:
+                    full = True
+                    set_setting(db, "index_version", INDEX_VERSION)
+                    db.commit()
+        except Exception:  # noqa: BLE001
+            log.exception("Проверка версии индекса")
+        if full:
+            log.info("Новая версия чтения тегов — полное пересканирование")
+        self.start(full=full)  # при запуске: быстрая инкрементальная проверка (или полная после обновления)
         while True:
             time.sleep(30)
             try:
