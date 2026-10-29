@@ -1,3 +1,4 @@
+import { AndroidAppBanner } from "@/components/AndroidApp";
 import { NowMixHero } from "@/pages/MixesPage";
 import { AlbumCard, CardGrid } from "@/components/Cards";
 import { Cover } from "@/components/Cover";
@@ -118,6 +119,8 @@ export default function HomePage() {
           <Dices className="size-[18px]" /> Случайный микс
         </button>
       </div>
+
+      <AndroidAppBanner />
 
       {mixes.data?.now && <NowMixHero mix={mixes.data.now} season={mixes.data.season} />}
 

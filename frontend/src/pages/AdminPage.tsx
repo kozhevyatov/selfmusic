@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { AndroidAppAdminCard } from "@/components/AndroidApp";
 import { AvatarCropper } from "@/components/AvatarCropper";
 import { Avatar } from "@/components/Cover";
 import { FolderBrowser } from "@/components/FolderBrowser";
@@ -147,6 +148,7 @@ function GeneralTab() {
   };
   return (
     <div className="grid max-w-3xl gap-5">
+      <AndroidAppAdminCard />
       <Card className="flex flex-col gap-4">
         <form
           onSubmit={(e) => {

@@ -13,7 +13,7 @@ from .config import VERSION, settings
 from .limits import BodyLimitMiddleware
 from .media import ensure_dirs
 from . import analysis as _analysis  # noqa: F401 — фоновый анализ звука запускается после подключения БД
-from .routers import admin, auth, books, library, mixes, profile, queue, setup, shares, stats, subsonic, uploads
+from .routers import admin, android, auth, books, library, mixes, profile, queue, setup, shares, stats, subsonic, uploads
 
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
@@ -50,6 +50,7 @@ app.include_router(mixes.router)
 app.include_router(books.router)
 app.include_router(stats.router)
 app.include_router(queue.router)
+app.include_router(android.router)
 app.include_router(subsonic.router)
 
 

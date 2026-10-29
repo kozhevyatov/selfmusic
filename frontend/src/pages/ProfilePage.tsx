@@ -1,3 +1,4 @@
+import { AndroidAppCard } from "@/components/AndroidApp";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AvatarCropper } from "@/components/AvatarCropper";
 import { EqualizerDialog, SoundSettingsCard } from "@/components/SoundSettings";
@@ -217,6 +218,7 @@ export default function ProfilePage() {
       <PageHeader title="Профиль" subtitle={`${user.username}${user.is_admin ? " · администратор" : ""}`} />
 
       <AvatarCard />
+      <AndroidAppCard />
 
       <Card>
         <form onSubmit={saveProfile} className="grid gap-5">

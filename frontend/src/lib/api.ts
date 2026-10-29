@@ -127,6 +127,8 @@ export type RemoteQueue =
       tracks?: Track[];
     };
 
+export type AndroidApp = { available: false } | { available: true; version: string; size: number; uploaded_at: string };
+
 export type FavoriteArtist = Artist & { plays: number; seconds: number };
 
 export type StatsPeriod = "week" | "month" | "year" | "all";
@@ -727,6 +729,7 @@ export const api = {
       request<TokenResponse>("/api/auth/register", { method: "POST", body: json(data) }),
     logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
     logoutAll: () => request<{ ok: true }>("/api/auth/logout-all", { method: "POST" }),
+    androidApp: () => request<AndroidApp>("/api/app/info"),
   },
 
   settings: {
@@ -940,6 +943,14 @@ export const api = {
     libraryTree: (id: number, path = "") => request<FolderTree>(`/api/admin/libraries/${id}/tree${qs({ path })}`),
     setFolder: (id: number, path: string, include: boolean | null) =>
       request<{ ok: true; excluded_count: number }>(`/api/admin/libraries/${id}/folders`, { method: "PUT", body: json({ path, include }) }),
+    uploadApp: (file: File, version: string) => {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      form.append("version", version);
+      return request<AndroidApp>("/api/admin/app", { method: "POST", body: form });
+    },
+    fetchApp: (url: string, version: string) => request<AndroidApp>("/api/admin/app/url", { method: "POST", body: json({ url, version }) }),
+    deleteApp: () => request<AndroidApp>("/api/admin/app", { method: "DELETE" }),
     deleteLibrary: (id: number) => request<{ ok: true }>(`/api/admin/libraries/${id}`, { method: "DELETE" }),
     browse: (path = "") => request<FsListing>(`/api/admin/fs${qs({ path })}`),
     scanStatus: () => request<ScanStatus>("/api/admin/scan"),

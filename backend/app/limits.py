@@ -19,6 +19,7 @@ DEFAULT_LIMIT = 2 * MB
 RULES: list[tuple[re.Pattern[str], int, bool]] = [
     (re.compile(r"^/api/uploads/?$"), 2048 * MB + 16 * MB, True),
     (re.compile(r"^/api/albums/\d+/cover/?$"), 26 * MB, True),
+    (re.compile(r"^/api/admin/app/?$"), 310 * MB, True),  # APK приложения для Android
 ]
 
 
