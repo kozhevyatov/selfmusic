@@ -210,6 +210,60 @@ def index_file(
     return added, ok
 
 
+def shadow_library(db: Session, lib: Library, create: bool = False) -> Library | None:
+    """Служебная выключенная библиотека для треков исключённых подпапок этой папки."""
+    shadow = db.scalar(select(Library).where(Library.hidden_of == lib.id))
+    if shadow or not create:
+        return shadow
+    shadow = Library(
+        name=f"{lib.name} · скрытые подпапки"[:128],
+        path=lib.path,
+        enabled=False,
+        default_access=False,
+        kind="hidden",
+        owner_id=lib.owner_id,
+        hidden_of=lib.id,
+    )
+    db.add(shadow)
+    db.flush()
+    return shadow
+
+
+def apply_folder_rules(db: Session, lib: Library) -> set[int]:
+    """Треки исключённых подпапок — в «тень», возвращённых — обратно. Ничего не удаляется:
+    история, оценки, избранное и места в плейлистах сохраняются. Возвращает затронутые альбомы."""
+    rules = folders.parse(lib.folder_rules)
+    shadow = shadow_library(db, lib)
+    touched: set[int] = set()
+    moves: list[tuple[list[int], int]] = []
+    if rules:
+        rows = db.execute(select(Track.id, Track.path, Track.album_id).where(Track.library_id == lib.id)).all()
+        hide = [r for r in rows if not folders.file_included(rules, r.path)]
+        if hide:
+            shadow = shadow or shadow_library(db, lib, create=True)
+            moves.append(([r.id for r in hide], shadow.id))
+            touched.update(r.album_id for r in hide)
+    if shadow is not None:
+        rows = db.execute(select(Track.id, Track.path, Track.album_id).where(Track.library_id == shadow.id)).all()
+        back = [r for r in rows if folders.file_included(rules, r.path)]
+        if back:
+            moves.append(([r.id for r in back], lib.id))
+            touched.update(r.album_id for r in back)
+    for ids, target in moves:
+        for i in range(0, len(ids), 500):
+            db.execute(update(Track).where(Track.id.in_(ids[i : i + 500])).values(library_id=target))
+    # альбом целиком скрыт — уходит в «тень» вместе с треками; есть видимые треки — остаётся в папке
+    for album_id in touched:
+        album = db.get(Album, album_id)
+        if album is None:
+            continue
+        visible = db.scalar(select(func.count(Track.id)).where(Track.album_id == album_id, Track.library_id == lib.id)) or 0
+        album.library_id = lib.id if visible or shadow is None else shadow.id
+    if moves:
+        db.flush()
+    return touched
+
+
 def update_library_stats(db: Session, lib: Library) -> None:
     stats = db.execute(
         select(func.count(Track.id), func.coalesce(func.sum(Track.size), 0), func.coalesce(func.sum(Track.duration), 0)).where(
@@ -390,6 +444,9 @@ class Scanner:
     def _scan_library(self, db: Session, lib: Library, full: bool) -> dict:
         root = Path(lib.path)
         result = {"added": 0, "updated": 0, "removed": 0, "errors": 0}
+        # сначала — исключённые/возвращённые подпапки: треки переезжают в «тень» и обратно, а не удаляются
+        rules_touched = apply_folder_rules(db, lib) if root.is_dir() else set()
+        db.commit()
         existing = {
             row.path: row
             for row in db.execute(
@@ -403,6 +460,7 @@ class Scanner:
             return result
 
         ctx = IndexContext()
+        ctx.touched.update(rules_touched)
         seen: set[str] = set()
         checked = changed = 0
         rules = folders.parse(lib.folder_rules)
@@ -584,6 +642,8 @@ def finalize_album(db: Session, album_id: int, root: Path, is_new: bool, artist_
     if not tracks:
         db.delete(album)
         return
+    # часть альбома в исключённой подпапке (например, CD2) — считаем только видимые треки
+    tracks = [t for t in tracks if t.library_id == album.library_id] or tracks
     album.track_count = len(tracks)
     album.duration = int(sum(t.duration for t in tracks))
     album.size = sum(t.size for t in tracks)

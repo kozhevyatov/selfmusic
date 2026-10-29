@@ -105,7 +105,9 @@ def album_tracks(db: Session, album_id: int) -> list[Track]:
     return list(
         db.scalars(
             select(Track)
-            .where(Track.album_id == album_id)
+            .join(Album, Album.id == Track.album_id)
+            # треки из исключённой подпапки (часть альбома, например CD2) лежат в «тени» — не показываем
+            .where(Track.album_id == album_id, Track.library_id == Album.library_id)
             .order_by(func.coalesce(Track.disc_no, 1), func.coalesce(Track.track_no, 9999), Track.path)
         )
     )

@@ -243,7 +243,7 @@ def _check_path(db: Session, raw: str, exclude_id: int | None = None) -> str:
     path = path.resolve()
     if not path.is_dir():
         raise HTTPException(400, f"Папка не найдена внутри контейнера: {path}. Проверьте volumes в docker-compose.")
-    for other in db.scalars(select(Library).where(Library.owner_id.is_(None))):
+    for other in db.scalars(select(Library).where(Library.owner_id.is_(None), Library.hidden_of.is_(None))):
         if other.id == exclude_id:
             continue
         o = Path(other.path).resolve()
@@ -254,7 +254,7 @@ def _check_path(db: Session, raw: str, exclude_id: int | None = None) -> str:
 
 @router.get("/admin/libraries")
 def list_libraries(db: Session = Depends(get_db), _: User = Depends(require_admin)) -> list[dict]:
-    return [_library_out(db, lib) for lib in db.scalars(select(Library).order_by(Library.id))]
+    return [_library_out(db, lib) for lib in db.scalars(select(Library).where(Library.hidden_of.is_(None)).order_by(Library.id))]
 
 
 @router.post("/admin/libraries")
@@ -319,7 +319,9 @@ def library_tree(library_id: int, path: str = "", db: Session = Depends(get_db),
     rules = folders.parse(lib.folder_rules)
     # треки этой ветки из базы → счётчики по подпапкам первого уровня
     prefix = f"{rel}/" if rel else ""
-    q = select(Track.path).where(Track.library_id == lib.id)
+    # вместе с «тенью»: у исключённой подпапки видно, сколько треков в ней спрятано
+    shadow_id = db.scalar(select(Library.id).where(Library.hidden_of == lib.id))
+    q = select(Track.path).where(Track.library_id.in_([lib.id, shadow_id] if shadow_id else [lib.id]))
     if prefix:
         esc = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         q = q.where(Track.path.like(f"{esc}%", escape="\\"))

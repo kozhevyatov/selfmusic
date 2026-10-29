@@ -96,6 +96,9 @@ class Library(Base):
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     # исключённые/возвращённые подпапки (см. app/folders.py)
     folder_rules: Mapped[str | None] = mapped_column(LongText, nullable=True)
+    # «тень» папки: выключенная служебная библиотека, куда переезжают треки исключённых подпапок
+    # (с историей, оценками и плейлистами); при возврате подпапки они переезжают обратно
+    hidden_of: Mapped[int | None] = mapped_column(ForeignKey("libraries.id", ondelete="CASCADE"), nullable=True, index=True)
     track_count: Mapped[int] = mapped_column(Integer, default=0)
     album_count: Mapped[int] = mapped_column(Integer, default=0)
     total_size: Mapped[int] = mapped_column(BigInteger, default=0)
