@@ -1,0 +1,12 @@
+# Подключение к MariaDB из другого контейнера (через его Docker-сеть).
+# Включается строкой DB_NETWORK=<имя сети> в .env — скрипт деплоя добавит этот файл сам.
+# Вручную: docker compose -f docker-compose.yml -f docker-compose.mariadb.yml up -d
+services:
+  app:
+    networks:
+      - dbnet
+
+networks:
+  dbnet:
+    external: true
+    name: ${DB_NETWORK:-db}

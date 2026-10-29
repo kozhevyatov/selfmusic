@@ -30,8 +30,6 @@ services:
       - ${BOOKS_DIR:-./books}:/music/books:ro
       # - /volume1/vinyl:/music/vinyl:ro
       # - /volume2/audiobooks:/music/audiobooks:ro
-    networks:
-      - db                                 # сеть с контейнером MariaDB (хост db)
     environment:
       TZ: Asia/Novosibirsk
       # Мастер первого запуска без токена открывается только из локальной сети.
@@ -42,6 +40,9 @@ services:
       # MAX_TRANSCODES: "12"
       # COVER_WORKERS: "2"
 
+      # База — SQLite (файл в data/) или MariaDB/MySQL, выбирается в мастере.
+      # Для MariaDB в другом контейнере добавьте в .env строку DB_NETWORK=db (имя его Docker-сети) —
+      # скрипт деплоя подключит docker-compose.mariadb.yml, и хост базы будет виден по имени контейнера.
       # Если указать, шаг выбора БД в мастере пропускается.
       # DATABASE_URL: "mysql+pymysql://selfmusic:ПАРОЛЬ@db:3306/selfmusic?charset=utf8mb4"
 
@@ -51,8 +52,3 @@ services:
     # Чтобы загруженные файлы принадлежали вашему пользователю DSM, а не root,
     # укажите его uid:gid (узнать: id ИМЯ по SSH). Папки data/ и media/ должны быть доступны ему на запись.
     # user: "1026:100"
-
-networks:
-  db:
-    external: true
-    name: db
