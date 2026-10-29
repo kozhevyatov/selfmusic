@@ -141,6 +141,34 @@ _NUM = re.compile(r"\d+")
 _HIGH_WORD = re.compile("[\xc0-\xff\xa8\xb8]+")
 
 
+_CYR = re.compile("[А-Яа-яЁё]")
+
+
+def _utf8_read_as_cp1251(text: str) -> str | None:
+    """Обратная беда: UTF-8 когда-то прочитали как Windows-1251 и так записали в тег —
+    «РЎРµРґСЊРјРѕР№» вместо «Седьмой». Возвращаем байты в cp1251 и читаем как UTF-8.
+    Настоящий русский текст в cp1251 почти никогда не складывается в правильный UTF-8 — его не трогаем."""
+    if "Р" not in text and "С" not in text:
+        return None  # у такой «кашицы» почти каждая вторая буква — Р или С
+    out = bytearray()
+    for ch in text:
+        if ch == "\ufffd":
+            out.append(0x98)  # единственный байт без символа в cp1251 — его и потеряли («И», «Ш»…)
+            continue
+        try:
+            out += ch.encode("cp1251")
+        except UnicodeEncodeError:
+            if ord(ch) < 256:
+                out.append(ord(ch))  # байт без символа в cp1251 (например 0x98 из буквы «И»)
+            else:
+                return None
+    try:
+        fixed = out.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return fixed if fixed != text and len(_CYR.findall(fixed)) >= 2 else None
+
+
 def fix_encoding(text: str) -> str:
     """Старые MP3: русские теги в Windows-1251, помеченные как Latin-1 → «Ñèëà ðèôìîâàííûõ».
 
@@ -150,6 +178,9 @@ def fix_encoding(text: str) -> str:
     """
     if not text or text.isascii():
         return text
+    fixed = _utf8_read_as_cp1251(text)
+    if fixed is not None:
+        return fixed
     try:
         raw = text.encode("latin-1")
     except UnicodeEncodeError:
