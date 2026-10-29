@@ -266,15 +266,29 @@ TRANSCODE_FORMATS = {
 }
 
 
-def transcode_response(path: Path, fmt: str, bitrate: int, offset: float = 0) -> StreamingResponse:
+def transcode_response(
+    path: Path,
+    fmt: str,
+    bitrate: int,
+    offset: float = 0,
+    *,
+    exact: int | None = None,
+    status_code: int = 200,
+    headers: dict[str, str] | None = None,
+) -> StreamingResponse:
+    """exact — отдать ровно столько байт (лишнее обрезать, недостающее добить нулями): так размер ответа
+    совпадает с объявленным Content-Length, и плеер может запрашивать поток кусками (Range)."""
     codec, container, media_type = TRANSCODE_FORMATS.get(fmt, TRANSCODE_FORMATS["mp3"])
     bitrate = max(32, min(bitrate, 320))
     cmd = [settings.ffmpeg, "-v", "error", "-nostdin"]
     if offset > 0:
-        cmd += ["-ss", f"{offset:.2f}"]
+        cmd += ["-ss", f"{offset:.3f}"]
     cmd += ["-i", str(path), "-map", "0:a:0", "-vn", "-threads", "1", "-c:a", codec, "-b:a", f"{bitrate}k"]
     if fmt == "opus":
         cmd += ["-ar", "48000"]
+    if exact is not None:
+        # чистый поток кадров постоянного битрейта: без ID3 и Xing — байт N ≈ секунда N / (битрейт/8)
+        cmd += ["-ar", "44100", "-write_xing", "0", "-id3v2_version", "0"]
     cmd += ["-f", container, "pipe:1"]
 
     global _transcodes
@@ -304,11 +318,19 @@ def transcode_response(path: Path, fmt: str, bitrate: int, offset: float = 0) ->
             raise
         try:
             assert proc.stdout is not None
-            while True:
-                chunk = await proc.stdout.read(64 * 1024)
+            left = exact
+            while left is None or left > 0:
+                chunk = await proc.stdout.read(64 * 1024 if left is None else min(64 * 1024, left))
                 if not chunk:
                     break
+                if left is not None:
+                    left -= len(chunk)
                 yield chunk
+            # ffmpeg закончил чуть раньше расчётного размера — добиваем тишиной (декодер пропустит нули)
+            while left:
+                pad = min(64 * 1024, left)
+                left -= pad
+                yield b"\0" * pad
         finally:
             if proc.returncode is None:
                 try:
@@ -319,8 +341,36 @@ def transcode_response(path: Path, fmt: str, bitrate: int, offset: float = 0) ->
             release()
 
     return _TranscodeResponse(
-        stream(), release, media_type=media_type, headers={"Cache-Control": "no-store", "Accept-Ranges": "none"}
+        stream(),
+        release,
+        status_code=status_code,
+        media_type=media_type,
+        headers=headers or {"Cache-Control": "no-store", "Accept-Ranges": "none"},
     )
+
+
+def ranged_mp3_response(request: Request, path: Path, bitrate: int, duration: float) -> Response:
+    """Перекодированный MP3 с поддержкой Range.
+
+    У MP3 с постоянным битрейтом размер известен заранее (длительность × битрейт / 8), а кусок с байта N —
+    это тот же поток с секунды N / (битрейт / 8). Поэтому отдаём Content-Length и честные ответы 206:
+    Safari на iPhone (и PWA) иначе дозапрашивает поток кусками, получает начало заново и играет трек сначала,
+    а перемотка в браузерах и Android-плеере без Range работает только в уже загруженной части.
+    """
+    bitrate = max(32, min(bitrate, 320))
+    bps = bitrate * 1000 // 8
+    total = max(int(duration * bps), 1)
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "no-store"}
+    range_header = request.headers.get("range")
+    if not range_header:
+        return transcode_response(path, "mp3", bitrate, exact=total, headers={**headers, "Content-Length": str(total)})
+    rng = _parse_range(range_header, total)
+    if rng is None:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+    start, end = rng
+    length = end - start + 1
+    headers.update({"Content-Range": f"bytes {start}-{end}/{total}", "Content-Length": str(length)})
+    return transcode_response(path, "mp3", bitrate, start / bps, exact=length, status_code=206, headers=headers)
 
 
 class _TranscodeResponse(StreamingResponse):
@@ -372,6 +422,8 @@ def stream_track(
     if not need:
         return file_response(request, path, content_type(suffix))
     target = fmt if fmt in TRANSCODE_FORMATS else "mp3"
+    if browser and target == "mp3" and offset <= 0 and track.duration and track.duration > 0:
+        return ranged_mp3_response(request, path, max_bitrate or 320, track.duration)
     return transcode_response(path, target, max_bitrate or 320, offset)
 
 
