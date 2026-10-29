@@ -62,7 +62,7 @@ def _num(v) -> float:  # noqa: ANN001
 
 
 def build_query(db: Session, user: User, rules: Rules):  # noqa: ANN201
-    libs = allowed_library_ids(db, user)
+    libs = allowed_library_ids(db, user, scoped=False)  # плейлист — не зависит от «Вся / Общая / Моя»
     plays = (
         select(Play.track_id, func.count().label("cnt"), func.max(Play.played_at).label("last"))
         .where(Play.user_id == user.id)

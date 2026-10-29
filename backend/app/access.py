@@ -18,19 +18,31 @@ from .config import UPLOAD_ROOT
 from .models import Library, LibraryAccess, Upload, User
 
 
-def allowed_library_ids(db: Session, user: User, only: int | None = None, kind: str = "music") -> list[int]:
+def allowed_library_ids(
+    db: Session, user: User, only: int | None = None, kind: str = "music", scoped: bool = True
+) -> list[int]:
     """Доступные пользователю папки. kind: music — музыка (по умолчанию: альбомы, поиск, подборки…),
-    audiobooks — аудиокниги, any — все (поток, обложки, теги, ссылки)."""
+    audiobooks — аудиокниги, any — все (поток, обложки, теги, ссылки).
+    scoped — учитывать выбор «Вся / Общая / Моя» (user.library_scope); не учитывается для плейлистов,
+    избранного, истории, явно открытой папки и всего с kind="any"."""
     access = select(LibraryAccess.library_id).where(LibraryAccess.user_id == user.id)
     cond = or_(Library.owner_id == user.id, Library.id.in_(access))
     if user.is_admin:
         cond = or_(cond, Library.owner_id.is_(None))
-    query = select(Library.id).where(Library.enabled.is_(True), cond)
+    query = select(Library.id, Library.owner_id).where(Library.enabled.is_(True), cond)
     if kind != "any":
         query = query.where(Library.kind == kind)
-    ids = list(db.scalars(query))
+    rows = list(db.execute(query))
+    ids = [r[0] for r in rows]
     if only is not None:
         return [i for i in ids if i == only]
+    scope = getattr(user, "library_scope", "all") or "all"
+    if scoped and kind != "any" and scope != "all":
+        mine = [i for i, owner in rows if owner == user.id]
+        shared = [i for i, owner in rows if owner != user.id]
+        # фильтруем, только когда есть из чего выбирать — иначе раздел просто опустел бы
+        if mine and shared:
+            return mine if scope == "mine" else shared
     return ids
 
 
@@ -88,23 +100,26 @@ def _slug(name: str) -> str:
     return s or "user"
 
 
-def personal_library(db: Session, user: User, create: bool = False) -> Library | None:
-    lib = db.scalar(select(Library).where(Library.owner_id == user.id))
+def personal_library(db: Session, user: User, create: bool = False, kind: str = "music") -> Library | None:
+    """Личная папка пользователя: музыка («Моя музыка») или аудиокниги («Мои аудиокниги»)."""
+    lib = db.scalar(select(Library).where(Library.owner_id == user.id, Library.kind == kind))
     if lib or not create:
         return lib
     # Имя папки — по логину, но «ivan_» и «ivan» дают один slug, а папка удалённого
     # пользователя может остаться на диске. Чужую или непустую папку не берём — добавляем id.
-    slug = _slug(user.username)
+    slug = _slug(user.username) + ("-books" if kind == "audiobooks" else "")
     path = (UPLOAD_ROOT / slug).resolve()
     taken = db.scalar(select(Library.id).where(Library.path == path.as_posix()))
     if taken or (path.exists() and any(p for p in path.iterdir() if not p.name.startswith((".", "@")))):
         path = (UPLOAD_ROOT / f"{slug}-{user.id}").resolve()
     path.mkdir(parents=True, exist_ok=True)
+    title = "Мои аудиокниги" if kind == "audiobooks" else "Моя музыка"
     lib = Library(
-        name=f"Моя музыка · {user.display_name or user.username}",
+        name=f"{title} · {user.display_name or user.username}",
         path=path.as_posix(),
         owner_id=user.id,
         default_access=False,
+        kind=kind,
     )
     db.add(lib)
     db.flush()
@@ -117,9 +132,11 @@ def upload_targets(db: Session, user: User) -> list[Library]:
     if mode == "none":
         return []
     targets: list[Library] = []
-    own = personal_library(db, user, create=mode in ("own", "libraries") and upload_root_ok())
-    if own and own.enabled and fs_writable(own.path):
-        targets.append(own)
+    can_create = mode in ("own", "libraries") and upload_root_ok()
+    for kind in ("music", "audiobooks"):
+        own = personal_library(db, user, create=can_create, kind=kind)
+        if own and own.enabled and fs_writable(own.path):
+            targets.append(own)
     if mode == "libraries":
         query = select(Library).where(Library.enabled.is_(True), Library.owner_id.is_(None))
         if not user.is_admin:

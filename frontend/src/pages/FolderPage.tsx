@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Cover } from "@/components/Cover";
 import { PlayFill } from "@/components/icon";
-import { ChevronRight, Folder, Link as LinkIcon, Shuffle } from "@/components/icons";
+import { ChevronRight, Folder, Link as LinkIcon, Search, Shuffle, X } from "@/components/icons";
 import { TrackList } from "@/components/TrackList";
 import { Empty, ErrorBox, PageLoader } from "@/components/ui/misc";
 import { api, type FolderEntry } from "@/lib/api";
@@ -29,7 +29,7 @@ async function playFolder(libraryId: number, path: string, shuffle = false) {
   }
 }
 
-function FolderTile({ libraryId, f }: { libraryId: number; f: FolderEntry }) {
+function FolderTile({ libraryId, f, sub }: { libraryId: number; f: FolderEntry; sub?: string }) {
   const [busy, setBusy] = useState(false);
   return (
     <div className="group relative">
@@ -51,7 +51,10 @@ function FolderTile({ libraryId, f }: { libraryId: number; f: FolderEntry }) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px] font-bold">{f.name}</span>
-          <span className="block truncate text-[13px] text-faint">{tracksLabel(f.track_count)}</span>
+          <span className="block truncate text-[13px] text-faint" title={sub}>
+            {sub ? `${sub} · ` : ""}
+            {tracksLabel(f.track_count)}
+          </span>
         </span>
       </Link>
       <button
@@ -71,6 +74,42 @@ function FolderTile({ libraryId, f }: { libraryId: number; f: FolderEntry }) {
   );
 }
 
+/** Поиск по папке и всем её подпапкам. */
+function FolderSearchResults({ libraryId, path, query }: { libraryId: number; path: string; query: string }) {
+  const q = useQuery(["folder-search", libraryId, path, query], () => api.library.folderSearch(libraryId, query, path), { staleTime: 30_000 });
+  if (q.isLoading) return <PageLoader />;
+  if (q.error || !q.data) return <ErrorBox error={q.error} />;
+  const r = q.data;
+  if (!r.folders.length && !r.tracks.length)
+    return <Empty icon={<Search />} title="Ничего не нашлось" text={`В этой папке нет ничего похожего на «${query}».`} />;
+  const base = path ? path + "/" : "";
+  return (
+    <div className="flex flex-col gap-7">
+      {r.folders.length > 0 && (
+        <section aria-label="Найденные папки" className="flex flex-col gap-2.5">
+          <h2 className="label-caps px-1">Папки{r.more_folders ? " — первые 60" : ""}</h2>
+          <div className="grid gap-2.5 sm:[grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
+            {r.folders.map((f) => (
+              <FolderTile
+                key={f.path}
+                libraryId={libraryId}
+                f={f}
+                sub={f.parent.startsWith(base) ? f.parent.slice(base.length) || undefined : f.parent || undefined}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+      {r.tracks.length > 0 && (
+        <section aria-label="Найденные треки" className="flex flex-col gap-2">
+          <h2 className="label-caps px-1">Треки{r.more_tracks ? " — первые 100" : ""}</h2>
+          <TrackList tracks={r.tracks} showAlbum selectable className="-mx-2 sm:-mx-3" />
+        </section>
+      )}
+    </div>
+  );
+}
+
 export default function FolderPage() {
   const { id } = useParams<{ id: string }>();
   const libraryId = Number(id);
@@ -78,6 +117,13 @@ export default function FolderPage() {
   const q = useQuery(["folder", libraryId, path], () => api.library.browse(libraryId, path));
   const canShare = useCanShare();
   const v = q.data;
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const t = window.setTimeout(() => setQuery(search.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
+  useEffect(() => setSearch(""), [libraryId, path]);
 
   if (q.isLoading) return <PageLoader />;
   if (q.error || !v) return <ErrorBox error={q.error} />;
@@ -142,6 +188,34 @@ export default function FolderPage() {
         </div>
       </header>
 
+      {(v.total_tracks > 0 || search) && (
+        <div className="relative max-w-xl">
+          <Search className="pointer-events-none absolute top-1/2 left-4 size-[18px] -translate-y-1/2 text-faint" />
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setSearch("")}
+            placeholder={path ? `Искать в «${v.name}»` : "Искать в папках и треках"}
+            aria-label="Поиск в папке"
+            className="h-12 w-full rounded-full border bg-surface-2/60 pr-11 pl-11 text-[15px] outline-none placeholder:text-faint focus:border-accent/60 focus:bg-surface-2 [&::-webkit-search-cancel-button]:hidden"
+          />
+          {search && (
+            <button
+              aria-label="Очистить поиск"
+              onClick={() => setSearch("")}
+              className="absolute top-1/2 right-2 flex size-8 -translate-y-1/2 items-center justify-center rounded-full text-muted hover:bg-surface-3 hover:text-fg"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {query.length >= 2 ? (
+        <FolderSearchResults libraryId={libraryId} path={path} query={query} />
+      ) : (
+        <>
       {v.folders.length > 0 && (
         <section aria-label="Подпапки" className="grid gap-2.5 sm:[grid-template-columns:repeat(auto-fill,minmax(260px,1fr))]">
           {path && (
@@ -168,6 +242,8 @@ export default function FolderPage() {
 
       {v.folders.length === 0 && v.tracks.length === 0 && (
         <Empty icon={<Folder />} title="Здесь пока пусто" text="Музыка появится после сканирования папки." />
+      )}
+        </>
       )}
     </div>
   );

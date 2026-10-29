@@ -57,6 +57,8 @@ class User(Base):
     upload_max_files: Mapped[int] = mapped_column(Integer, default=0)  # 0 — без лимита
     # Может создавать публичные ссылки (администратор — всегда)
     can_share: Mapped[bool] = mapped_column(Boolean, default=False)
+    # что показывать в медиатеке: all — всё, shared — только общие папки, mine — только личные
+    library_scope: Mapped[str] = mapped_column(String(16), default="all")
     # 0 — нет аватарки; иначе номер версии (для сброса кэша в браузере)
     avatar_version: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -312,6 +314,8 @@ class Share(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     allow_download: Mapped[bool] = mapped_column(Boolean, default=False)
+    # качество при прослушивании: original | 320 | 192 | 128 (скачивание — всегда оригинал)
+    quality: Mapped[str] = mapped_column(String(16), default="192")
     max_views: Mapped[int | None] = mapped_column(Integer, nullable=True)
     views: Mapped[int] = mapped_column(Integer, default=0)
     plays: Mapped[int] = mapped_column(Integer, default=0)

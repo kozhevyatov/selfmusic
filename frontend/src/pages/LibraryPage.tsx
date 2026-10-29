@@ -1,4 +1,5 @@
 import { BookOpen, ChartColumn, ChevronRight, CircleCheck, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Sparkles, Upload } from "@/components/icons";
+import { booksAvailable } from "@/components/LibraryScope";
 import { PageHeader } from "@/components/Section";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -10,7 +11,7 @@ export default function LibraryPage() {
   const { user } = useAuth();
   const libs = useQuery(["libraries"], api.library.libraries, { staleTime: 300_000 });
   const items = [
-    ...(libs.data?.some((l) => l.kind === "audiobooks") ? [{ to: "/books", label: "Аудиокниги", icon: BookOpen }] : []),
+    ...(booksAvailable(libs.data) ? [{ to: "/books", label: "Аудиокниги", icon: BookOpen }] : []),
     { to: "/mixes", label: "Подборки", icon: Sparkles },
     { to: "/albums", label: "Альбомы", icon: Disc3 },
     { to: "/artists", label: "Исполнители", icon: MicVocal },

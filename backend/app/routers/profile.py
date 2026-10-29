@@ -53,6 +53,8 @@ def update_profile(data: ProfileUpdate, db: Session = Depends(get_db), user: Use
             user.email = email
     if data.stream_quality is not None:
         user.stream_quality = data.stream_quality
+    if data.library_scope is not None:
+        user.library_scope = data.library_scope
     db.commit()
     db.refresh(user)
     return user

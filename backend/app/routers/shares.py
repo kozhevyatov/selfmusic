@@ -23,6 +23,7 @@ from sqlalchemy import Select, desc, func, select
 from sqlalchemy.orm import Session
 
 from .. import ratelimit
+from .. import folders
 from ..access import allowed_library_ids
 from ..app_settings import get_setting
 from ..config import settings
@@ -37,7 +38,6 @@ from ..serialize import cover_url, track_quality
 router = APIRouter(tags=["shares"])
 
 KIND_LABELS = {"folder": "Папка", "album": "Альбом", "artist": "Исполнитель", "playlist": "Плейлист", "tracks": "Подборка"}
-LISTEN_BITRATE = 192
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -195,6 +195,7 @@ def _share_out(db: Session, request: Request, share: Share, with_count: bool = T
         "has_password": bool(share.password_hash),
         "expires_at": expires,
         "allow_download": share.allow_download,
+        "quality": share.quality or "192",
         "max_views": share.max_views,
         "views": share.views,
         "plays": share.plays,
@@ -220,6 +221,8 @@ def _validate_target(db: Session, user: User, data: ShareCreate) -> dict:
         root = Path(lib.path).resolve()
         if folder and not (root / folder).resolve().is_dir():
             raise HTTPException(404, "Подпапка не найдена")
+        if folder and not folders.included(folders.parse(lib.folder_rules), folder):
+            raise HTTPException(400, "Эта папка исключена из медиатеки — делиться нечем")
         target.update(library_id=lib.id, folder=folder)
     elif data.kind == "album":
         album = db.get(Album, data.item_id or 0)
@@ -272,6 +275,7 @@ def create_share(
         password_hash=hash_password(data.password) if data.password else None,
         expires_at=expires,
         allow_download=data.allow_download,
+        quality=data.quality,
         max_views=data.max_views,
         **target,
     )
@@ -306,6 +310,8 @@ def update_share(
         share.expires_at = _aware(data.expires_at)
     if data.allow_download is not None:
         share.allow_download = data.allow_download
+    if data.quality is not None:
+        share.quality = data.quality
     if data.max_views is not None:
         share.max_views = data.max_views or None
     if data.enabled is not None:
@@ -347,6 +353,14 @@ def library_dirs(
     except OSError:
         raise HTTPException(404, "Папка недоступна")
     rel = "" if target == root else target.relative_to(root).as_posix()
+    rules = folders.parse(lib.folder_rules)
+    if rules:
+        # исключённые из медиатеки подпапки не показываем (кроме тех, где внутри есть возвращённые)
+        def visible(name: str) -> bool:
+            child = f"{rel}/{name}" if rel else name
+            return folders.included(rules, child) or folders.included_below(rules, child)
+
+        dirs = [d for d in dirs if visible(d)]
     count = db.scalar(
         select(func.count(Track.id)).where(
             Track.library_id == lib.id, *( [Track.path.like(_like_prefix(rel), escape="\\")] if rel else [] )
@@ -413,7 +427,17 @@ def _guard(request: Request, share: Share) -> None:
         raise HTTPException(401, "Откройте ссылку заново")
 
 
-def _public_track(t: Track, allow_download: bool) -> dict:
+def _quality_label(t: Track, quality: str) -> str:
+    if quality == "original":
+        return track_quality(t)
+    q = int(quality)
+    # исходник и так не лучше — отдаём как есть (браузер играет его без перекодирования)
+    if t.suffix.lower() in ("mp3", "aac", "m4a", "ogg", "opus") and t.bitrate and t.bitrate <= q + 16:
+        return track_quality(t)
+    return f"MP3 · {q}"
+
+
+def _public_track(t: Track, allow_download: bool, quality: str = "192", base: str | None = None) -> dict:
     album = t.album
     return {
         "id": t.id,
@@ -424,10 +448,12 @@ def _public_track(t: Track, allow_download: bool) -> dict:
         "track_no": t.track_no,
         "disc_no": t.disc_no,
         "duration": round(t.duration, 2),
-        "quality": track_quality(t) if allow_download else "MP3 · 192",
+        "quality": _quality_label(t, quality),
         "size": t.size if allow_download else None,
         "cover": f"/api/s/{{token}}/cover/{t.album_id}" if album and album.cover else None,
         "has_lyrics": bool(t.lyrics),
+        # для ссылки на папку — подпапка относительно неё (группировка на странице)
+        "folder": (t.path.rsplit("/", 1)[0] if "/" in t.path else "")[len(base) :].strip("/") if base is not None else None,
     }
 
 
@@ -453,7 +479,8 @@ def open_share(token: str, request: Request, response: Response, db: Session = D
         _grant(response, request, share)
     tracks = share_tracks(db, share)
     album = _cover_album(db, share, tracks)
-    items = [_public_track(t, share.allow_download) for t in tracks]
+    folder_base = share.folder if share.kind == "folder" else None
+    items = [_public_track(t, share.allow_download, share.quality or "192", folder_base) for t in tracks]
     for it in items:
         if it["cover"]:
             it["cover"] = it["cover"].replace("{token}", share.token)
@@ -496,10 +523,13 @@ def share_stream(token: str, track_id: int, request: Request, db: Session = Depe
     share = _load(db, token)
     _guard(request, share)
     track = share_has_track(db, share, track_id)
-    if share.allow_download:
+    quality = share.quality or "192"
+    if quality == "original":
         return stream_track(request, db, track, browser=True)
-    # «Только слушать» — не оригинал, а MP3 192
-    return stream_track(request, db, track, max_bitrate=LISTEN_BITRATE, fmt="mp3", browser=True)
+    bitrate = int(quality)
+    if track.suffix.lower() in ("mp3", "aac", "m4a", "ogg", "opus") and track.bitrate and track.bitrate <= bitrate + 16:
+        return stream_track(request, db, track, browser=True)  # исходник не лучше выбранного качества
+    return stream_track(request, db, track, max_bitrate=bitrate, fmt="mp3", browser=True)
 
 
 @router.post("/api/s/{token}/play")

@@ -10,7 +10,9 @@ USERNAME_PATTERN = r"^[a-zA-Z0-9_.-]{3,64}$"
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+$"
 
 Quality = Literal["original", "320", "192", "128"]
+ShareQuality = Literal["original", "320", "192", "128"]
 UploadMode = Literal["none", "own", "libraries"]
+LibraryScope = Literal["all", "shared", "mine"]
 
 
 # ---------- setup ----------
@@ -71,6 +73,7 @@ class UserOut(BaseModel):
     upload_quota_mb: int
     upload_max_files: int
     can_share: bool
+    library_scope: str = "all"
     avatar: str | None = None
     created_at: datetime
     last_seen_at: datetime | None = None
@@ -81,6 +84,7 @@ class ProfileUpdate(BaseModel):
     display_name: str | None = Field(default=None, max_length=128)
     email: str | None = Field(default=None, pattern=EMAIL_PATTERN, max_length=255)
     stream_quality: Quality | None = None
+    library_scope: LibraryScope | None = None
 
 
 class PasswordChange(BaseModel):
@@ -218,6 +222,7 @@ class ShareCreate(BaseModel):
     password: str | None = Field(default=None, max_length=128)
     expires_at: datetime | None = None
     allow_download: bool = False
+    quality: ShareQuality = "192"
     max_views: int | None = Field(default=None, ge=1, le=1_000_000)
 
 
@@ -229,6 +234,7 @@ class ShareUpdate(BaseModel):
     expires_at: datetime | None = None
     clear_expiry: bool = False
     allow_download: bool | None = None
+    quality: ShareQuality | None = None
     max_views: int | None = Field(default=None, ge=0, le=1_000_000)  # 0 — без лимита
     enabled: bool | None = None
 

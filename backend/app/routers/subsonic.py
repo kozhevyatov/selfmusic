@@ -185,6 +185,7 @@ class Ctx:
         self.request = request
         self._libs: list[int] | None = None
         self._all_libs: list[int] | None = None
+        self._plain_libs: list[int] | None = None
 
     def libs(self, folder: int | None = None) -> list[int]:
         """Без выбора папки — только музыка (книги не мешаются в альбомах, поиске, случайных).
@@ -194,6 +195,12 @@ class Ctx:
         if folder is not None:
             return [i for i in self.all_libs() if i == folder]
         return self._libs
+
+    def plain_libs(self) -> list[int]:
+        """Музыка без учёта «Вся / Общая / Моя» — для плейлистов и очереди."""
+        if self._plain_libs is None:
+            self._plain_libs = allowed_library_ids(self.db, self.user, scoped=False)
+        return self._plain_libs
 
     def all_libs(self) -> list[int]:
         if self._all_libs is None:
@@ -766,7 +773,7 @@ def get_now_playing(c: Ctx) -> dict:
             continue
         track = c.db.get(Track, track_id)
         user = c.db.get(User, user_id)
-        if not track or not user or track.library_id not in c.libs():
+        if not track or not user or track.library_id not in c.plain_libs():
             continue
         song = c.songs([track])[0]
         song.update({"username": user.username, "minutesAgo": int((now - at) / 60), "playerId": 0, "playerName": client})
@@ -785,7 +792,7 @@ def _playlist_tracks(c: Ctx, pl: Playlist) -> list[Track]:
         c.db.scalars(
             select(Track)
             .join(PlaylistEntry, PlaylistEntry.track_id == Track.id)
-            .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(c.libs() or [-1]))
+            .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(c.plain_libs() or [-1]))
             .order_by(PlaylistEntry.position, PlaylistEntry.id)
         )
     )
@@ -798,7 +805,7 @@ def _playlist(c: Ctx, pl: Playlist, tracks: list[Track] | None = None) -> dict:
         stats = c.db.execute(
             select(func.count(Track.id), func.coalesce(func.sum(Track.duration), 0), func.min(Track.album_id))
             .join(PlaylistEntry, PlaylistEntry.track_id == Track.id)
-            .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(c.libs() or [-1]))
+            .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(c.plain_libs() or [-1]))
         ).one()
         count, duration, first_album = stats
     else:
@@ -936,7 +943,7 @@ def update_playlist(c: Ctx) -> dict:
             c.db.scalars(
                 select(PlaylistEntry)
                 .join(Track, Track.id == PlaylistEntry.track_id)
-                .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(c.libs() or [-1]))
+                .where(PlaylistEntry.playlist_id == pl.id, Track.library_id.in_(c.plain_libs() or [-1]))
                 .order_by(PlaylistEntry.position, PlaylistEntry.id)
             )
         )
@@ -966,7 +973,7 @@ def get_play_queue(c: Ctx) -> dict:
     if not pq:
         return {}
     ids = [i for i in json.loads(pq.track_ids or "[]") if isinstance(i, int)]
-    tracks = {t.id: t for t in c.db.scalars(tracks_query(c.libs()).where(Track.id.in_(ids or [-1])))}
+    tracks = {t.id: t for t in c.db.scalars(tracks_query(c.plain_libs()).where(Track.id.in_(ids or [-1])))}
     return {
         "playQueue": {
             "current": f"tr-{pq.current_id}" if pq.current_id else None,

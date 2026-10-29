@@ -95,7 +95,7 @@ def _info(db: Session, user: User) -> dict:
             "files": 0 if user.is_admin else user.upload_max_files,
         },
         "used": {"bytes": used_bytes, "files": used_files},
-        "targets": [{"id": lib.id, "name": lib.name, "personal": lib.owner_id == user.id} for lib in targets],
+        "targets": [{"id": lib.id, "name": lib.name, "personal": lib.owner_id == user.id, "kind": lib.kind} for lib in targets],
         "personal_available": upload_root_ok(),
     }
 

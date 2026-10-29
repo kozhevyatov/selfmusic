@@ -17,6 +17,7 @@ export type User = {
   is_admin: boolean;
   is_active: boolean;
   stream_quality: Quality;
+  library_scope: LibraryScope;
   upload_mode: UploadMode;
   upload_quota_mb: number;
   upload_max_files: number;
@@ -166,10 +167,13 @@ export type Home = {
   stats: { tracks: number; albums: number; artists: number; duration: number };
 };
 
+export type LibraryScope = "all" | "shared" | "mine";
+
 export type MyLibrary = {
   id: number;
   name: string;
   kind: "music" | "audiobooks";
+  personal: boolean;
   path: string | null;
   track_count: number;
   album_count: number;
@@ -260,7 +264,7 @@ export type UploadInfo = {
   mode: UploadMode;
   limits: { bytes: number; files: number };
   used: { bytes: number; files: number };
-  targets: { id: number; name: string; personal: boolean }[];
+  targets: { id: number; name: string; personal: boolean; kind?: "music" | "audiobooks" }[];
   personal_available: boolean;
 };
 
@@ -322,6 +326,7 @@ export type Share = {
   has_password: boolean;
   expires_at: string | null;
   allow_download: boolean;
+  quality: ShareQuality;
   max_views: number | null;
   views: number;
   plays: number;
@@ -342,9 +347,12 @@ export type ShareOptions = {
   expires_at?: string | null;
   clear_expiry?: boolean;
   allow_download?: boolean;
+  quality?: ShareQuality;
   max_views?: number | null;
   enabled?: boolean;
 };
+
+export type ShareQuality = "original" | "320" | "192" | "128";
 
 export type PublicTrack = {
   id: number;
@@ -359,6 +367,7 @@ export type PublicTrack = {
   size: number | null;
   cover: string | null;
   has_lyrics: boolean;
+  folder: string | null;
 };
 
 export type PublicShare =
@@ -465,6 +474,12 @@ export type BooksHome = {
 };
 
 export type FolderEntry = { name: string; path: string; track_count: number; covers: string[] };
+export type FolderSearch = {
+  folders: (FolderEntry & { parent: string })[];
+  tracks: Track[];
+  more_folders: boolean;
+  more_tracks: boolean;
+};
 export type FolderView = {
   library: { id: number; name: string };
   path: string;
@@ -705,7 +720,7 @@ export const api = {
   },
 
   me: {
-    update: (data: Partial<Pick<User, "display_name" | "email" | "stream_quality" | "username">>) =>
+    update: (data: Partial<Pick<User, "display_name" | "email" | "stream_quality" | "username" | "library_scope">>) =>
       request<User>("/api/me", { method: "PATCH", body: json(data) }),
     changePassword: (current_password: string, new_password: string) =>
       request<TokenResponse>("/api/me/password", { method: "POST", body: json({ current_password, new_password }) }),
@@ -754,6 +769,8 @@ export const api = {
     saveMix: (key: string, name = "") =>
       request<{ id: number; name: string }>(`/api/mixes/${key}/save`, { method: "POST", body: json({ name }) }),
     browse: (libraryId: number, path = "") => request<FolderView>(`/api/libraries/${libraryId}/browse${qs({ path })}`),
+    folderSearch: (libraryId: number, q: string, path = "") =>
+      request<FolderSearch>(`/api/libraries/${libraryId}/folder-search${qs({ q, path })}`),
     folderTracks: (libraryId: number, path = "") =>
       request<Track[]>(`/api/libraries/${libraryId}/folder-tracks${qs({ path })}`),
     albums: (p: { sort?: string; library?: number; genre?: string; q?: string; offset?: number; limit?: number } = {}) =>

@@ -79,7 +79,7 @@ def _user_out(db: Session, user: User) -> dict:
     ]
     used_bytes, used_files = upload_usage(db, user.id)
     data["upload_used"] = {"bytes": used_bytes, "files": used_files}
-    personal = db.scalar(select(Library.id).where(Library.owner_id == user.id))
+    personal = db.scalar(select(Library.id).where(Library.owner_id == user.id, Library.kind == "music"))
     data["personal_library_id"] = personal
     return data
 

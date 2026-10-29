@@ -35,6 +35,7 @@ import {
 import { BalalaikaMark, Brand } from "./Logo";
 import { MiniPlayer, NowPlaying, PlayerBar } from "./Player";
 import { SyncOfferCard, UpdateCard } from "./SyncOffer";
+import { booksAvailable, LibraryScopeSwitch } from "./LibraryScope";
 import { startUpdateChecks } from "@/lib/updates";
 import { startSync } from "@/lib/sync";
 import OfflinePage from "@/pages/OfflinePage";
@@ -114,12 +115,15 @@ function Sidebar() {
   const playlists = useQuery(["playlists"], api.playlists.list, { staleTime: 60_000 });
   const settings = useQuery(["settings"], api.settings.get, { staleTime: 300_000 });
   const libs = useQuery(["libraries"], api.library.libraries, { staleTime: 300_000 });
-  const hasBooks = Boolean(libs.data?.some((l) => l.kind === "audiobooks"));
+  const hasBooks = booksAvailable(libs.data);
   return (
     <aside className="hidden h-dvh w-[260px] shrink-0 flex-col gap-7 border-r px-4 pt-7 pb-[112px] lg:flex">
-      <Link to="/" className="px-2">
-        <Brand name={settings.data?.site_name} />
-      </Link>
+      <div className="flex flex-col gap-4">
+        <Link to="/" className="px-2">
+          <Brand name={settings.data?.site_name} />
+        </Link>
+        <LibraryScopeSwitch />
+      </div>
       <nav aria-label="Основная навигация" className="flex flex-col gap-0.5">
         {NAV.map(({ to, label, icon: Icon }) => {
           const active = isActive(pathname, to);
@@ -222,7 +226,10 @@ function MobileHeader() {
         </span>
         <span className="font-display text-[17px] font-semibold tracking-[-0.03em]">{settings.data?.site_name ?? "SelfMusic"}</span>
       </Link>
-      <UserMenu compact />
+      <div className="flex items-center gap-2">
+        <LibraryScopeSwitch compact />
+        <UserMenu compact />
+      </div>
     </header>
   );
 }

@@ -40,6 +40,11 @@ def _libs(db: Session, user: User, library: int | None = None) -> list[int]:
     return allowed_library_ids(db, user, library)
 
 
+def _all_libs(db: Session, user: User) -> list[int]:
+    """Без учёта «Вся / Общая / Моя»: плейлисты, избранное, история, явно открытые альбом и исполнитель."""
+    return allowed_library_ids(db, user, scoped=False)
+
+
 def _visible_album(db: Session, user: User, album_id: int) -> Album:
     album = db.get(Album, album_id)
     if not album or album.library_id not in allowed_library_ids(db, user, kind="any"):
@@ -77,6 +82,7 @@ def my_libraries(db: Session = Depends(get_db), user: User = Depends(get_current
             "id": lib.id,
             "name": lib.name,
             "kind": lib.kind,
+            "personal": lib.owner_id == user.id,
             "path": lib.path if user.is_admin else None,
             "track_count": lib.track_count,
             "album_count": lib.album_count,
@@ -173,6 +179,63 @@ def browse_folder(
     }
 
 
+@router.get("/libraries/{library_id}/folder-search")
+def folder_search(
+    library_id: int,
+    q: str = Query(..., min_length=1, max_length=200),
+    path: str = "",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Поиск внутри папки (со всеми подпапками): папки по имени и треки по названию, исполнителю, имени файла.
+    Сравнение в Python — lower() в SQLite не понимает кириллицу."""
+    lib, rel = _folder_scope(db, user, library_id, path)
+    prefix = f"{rel}/" if rel else ""
+    needle = " ".join(q.lower().split())
+    rows = db.execute(
+        _in_folder(select(Track.id, Track.path, Track.title, Track.artist_name, Track.album_id).where(Track.library_id == lib.id), rel)
+    ).all()
+    found_dirs: dict[str, dict] = {}
+    track_ids: list[int] = []
+    for tid, tpath, title, artist, album_id in rows:
+        if not tpath.startswith(prefix):
+            continue
+        rest = tpath[len(prefix):]
+        parts = rest.split("/")
+        acc = rel
+        for part in parts[:-1]:
+            acc = f"{acc}/{part}" if acc else part
+            if needle in part.lower():
+                d = found_dirs.setdefault(acc, {"name": part, "path": acc, "track_count": 0, "albums": []})
+                d["track_count"] += 1
+                if album_id not in d["albums"] and len(d["albums"]) < 4:
+                    d["albums"].append(album_id)
+        if len(track_ids) < 200 and (
+            needle in (title or "").lower() or needle in (artist or "").lower() or needle in parts[-1].lower()
+        ):
+            track_ids.append(tid)
+    dirs = sorted(found_dirs.values(), key=lambda d: (d["path"].count("/"), d["name"].lower()))[:60]
+    album_ids = {a for d in dirs for a in d["albums"]}
+    albums = {a.id: a for a in db.scalars(select(Album).where(Album.id.in_(album_ids or [-1])))}
+    tmap = {t.id: t for t in db.scalars(select(Track).where(Track.id.in_(track_ids or [-1])))}
+    tracks = sorted((tmap[i] for i in track_ids if i in tmap), key=lambda t: t.path.lower())
+    return {
+        "folders": [
+            {
+                "name": d["name"],
+                "path": d["path"],
+                "parent": d["path"].rsplit("/", 1)[0] if "/" in d["path"] else "",
+                "track_count": d["track_count"],
+                "covers": [c for c in (cover_url(albums.get(a)) for a in d["albums"]) if c][:4],
+            }
+            for d in dirs
+        ],
+        "tracks": tracks_out(db, user.id, tracks[:100]),
+        "more_folders": len(found_dirs) > 60,
+        "more_tracks": len(track_ids) > 100,
+    }
+
+
 @router.get("/libraries/{library_id}/folder-tracks")
 def folder_tracks(
     library_id: int,
@@ -244,7 +307,7 @@ def list_albums(
 def get_album(album_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     album = _visible_album(db, user, album_id)
     tracks = album_tracks(db, album.id)
-    ids = _libs(db, user)
+    ids = _all_libs(db, user)
     more = []
     if album.artist_id:
         more = list(
@@ -295,7 +358,7 @@ def get_artist(artist_id: int, db: Session = Depends(get_db), user: User = Depen
     artist = db.get(Artist, artist_id)
     if not artist:
         raise HTTPException(404, "Исполнитель не найден")
-    ids = _libs(db, user)
+    ids = _all_libs(db, user)
     albums = list(db.scalars(album_list_query(ids, user.id, "year", artist_id=artist.id)))
     top = top_tracks(db, ids, artist.id, 10)
     if not albums and not top:
@@ -329,7 +392,7 @@ def get_artist(artist_id: int, db: Session = Depends(get_db), user: User = Depen
 @router.get("/artists/{artist_id}/tracks")
 def artist_tracks(artist_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
     """Все треки исполнителя по альбомам — для «Слушать всё» и «Перемешать»."""
-    ids = _libs(db, user)
+    ids = _all_libs(db, user)
     tracks = list(
         db.scalars(
             tracks_query(ids)
@@ -406,7 +469,7 @@ def record_play(data: PlayIn, db: Session = Depends(get_db), user: User = Depend
 def history(
     limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> list[dict]:
-    ids = _libs(db, user)
+    ids = _all_libs(db, user)
     rows = db.execute(
         select(Play.played_at, Track)
         .join(Track, Track.id == Play.track_id)
@@ -425,7 +488,7 @@ Kind = Literal["track", "album", "artist"]
 
 @router.get("/favorites")
 def favorites(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    ids = _libs(db, user)
+    ids = _all_libs(db, user)
     tracks = list(
         db.scalars(
             tracks_query(ids)
@@ -550,7 +613,7 @@ def _get_playlist(db: Session, user: User, playlist_id: int, write: bool = False
 
 
 def _append_tracks(db: Session, user: User, pl: Playlist, track_ids: list[int]) -> int:
-    ids = _libs(db, user)
+    ids = _all_libs(db, user)
     valid = set(db.scalars(select(Track.id).where(Track.id.in_(track_ids or [-1]), Track.library_id.in_(ids or [-1]))))
     pos = db.scalar(select(func.coalesce(func.max(PlaylistEntry.position), -1)).where(PlaylistEntry.playlist_id == pl.id))
     added = 0
@@ -574,7 +637,7 @@ def _rules_json(raw: dict | None) -> str | None:
 
 @router.get("/playlists")
 def list_playlists(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
-    ids = _libs(db, user)
+    ids = _all_libs(db, user)
     mine = select(PlaylistMember.playlist_id).where(PlaylistMember.user_id == user.id)
     pls = db.scalars(
         select(Playlist)
@@ -593,7 +656,7 @@ def create_playlist(data: PlaylistCreate, db: Session = Depends(get_db), user: U
         _append_tracks(db, user, pl, data.track_ids)
     db.commit()
     db.refresh(pl)
-    return _playlist_summary(db, pl, user, _libs(db, user))
+    return _playlist_summary(db, pl, user, _all_libs(db, user))
 
 
 @router.post("/playlists/preview")
@@ -614,7 +677,7 @@ def preview_rules(data: dict, db: Session = Depends(get_db), user: User = Depend
 @router.get("/playlists/{playlist_id}")
 def get_playlist(playlist_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     pl = _get_playlist(db, user, playlist_id)
-    ids = _libs(db, user)
+    ids = _all_libs(db, user)
     rules = smart.parse_rules(pl.rules)
     if rules is not None:
         tracks = smart.evaluate(db, user, rules)
@@ -654,7 +717,7 @@ def update_playlist(
         pl.rules = _rules_json(data.rules)
     pl.updated_at = datetime.now(timezone.utc)
     db.commit()
-    return _playlist_summary(db, pl, user, _libs(db, user))
+    return _playlist_summary(db, pl, user, _all_libs(db, user))
 
 
 class MembersIn(BaseModel):
@@ -676,7 +739,7 @@ def set_members(playlist_id: int, data: MembersIn, db: Session = Depends(get_db)
         db.add(PlaylistMember(playlist_id=pl.id, user_id=uid))
     pl.updated_at = datetime.now(timezone.utc)
     db.commit()
-    return _playlist_summary(db, pl, user, _libs(db, user))
+    return _playlist_summary(db, pl, user, _all_libs(db, user))
 
 
 @router.post("/playlists/{playlist_id}/leave")

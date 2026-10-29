@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, type Share, type ShareOptions, type ShareTarget } from "@/lib/api";
+import { api, type Share, type ShareOptions, type ShareQuality, type ShareTarget } from "@/lib/api";
 import { dialogs } from "@/lib/dialogs";
 import { invalidate } from "@/lib/query";
 import { toast } from "@/lib/toast";
@@ -47,6 +47,7 @@ function ShareResult({ share }: { share: Share }) {
       </div>
       <div className="flex flex-wrap gap-2 text-[13px] text-muted">
         <span className="rounded-full bg-surface-2 px-3 py-1">{share.allow_download ? "Можно скачать" : "Только слушать"}</span>
+        <span className="rounded-full bg-surface-2 px-3 py-1">{share.quality === "original" ? "Оригинал" : `MP3 ${share.quality}`}</span>
         {share.has_password && <span className="rounded-full bg-surface-2 px-3 py-1">С паролем</span>}
         <span className="rounded-full bg-surface-2 px-3 py-1">
           {share.expires_at ? `До ${new Date(share.expires_at).toLocaleDateString("ru-RU")}` : "Бессрочно"}
@@ -76,6 +77,7 @@ export function ShareDialog({ target, share }: { target?: ShareTarget; share?: S
   const [expiry, setExpiry] = useState<Expiry>(share?.expires_at ? "custom" : "7");
   const [date, setDate] = useState(share?.expires_at ? toLocalDate(share.expires_at) : toLocalDate(new Date(Date.now() + 30 * 864e5).toISOString()));
   const [download, setDownload] = useState(share?.allow_download ?? false);
+  const [quality, setQuality] = useState<ShareQuality>(share?.quality ?? "192");
   const [limit, setLimit] = useState(share?.max_views ? String(share.max_views) : "");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Share | null>(null);
@@ -116,6 +118,7 @@ export function ShareDialog({ target, share }: { target?: ShareTarget; share?: S
         title: title.trim(),
         description: description.trim(),
         allow_download: download,
+        quality,
         max_views: limit ? Number(limit) : editing ? 0 : null,
       };
       if (editing) {
@@ -203,7 +206,7 @@ export function ShareDialog({ target, share }: { target?: ShareTarget; share?: S
 
           <div role="radiogroup" aria-label="Режим" className="grid grid-cols-2 gap-3">
             {[
-              { v: false, icon: <PlayFill className="size-4" />, t: "Только слушать", d: "Поток MP3 192, без скачивания" },
+              { v: false, icon: <PlayFill className="size-4" />, t: "Только слушать", d: "Без скачивания файлов" },
               { v: true, icon: <Download className="size-4" />, t: "Слушать и скачивать", d: "Оригинальные файлы и ZIP-архив" },
             ].map((o) => (
               <button
@@ -225,6 +228,25 @@ export function ShareDialog({ target, share }: { target?: ShareTarget; share?: S
               </button>
             ))}
           </div>
+
+          <Field
+            id="sh-quality"
+            label="Качество при прослушивании"
+            hint={
+              download
+                ? "Скачиваются всегда оригинальные файлы — качество влияет только на прослушивание по ссылке."
+                : quality === "original"
+                  ? "Оригинал: FLAC и другие без потерь. Нужен быстрый интернет у слушателя."
+                  : "Сервер перекодирует на лету — меньше трафика, быстрее старт."
+            }
+          >
+            <Select id="sh-quality" value={quality} onChange={(e) => setQuality(e.target.value as ShareQuality)}>
+              <option value="original">Оригинал (без потерь, если файл FLAC)</option>
+              <option value="320">MP3 320 кбит/с — максимум для MP3</option>
+              <option value="192">MP3 192 кбит/с — оптимально</option>
+              <option value="128">MP3 128 кбит/с — экономия трафика</option>
+            </Select>
+          </Field>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field id="sh-exp" label="Срок действия">

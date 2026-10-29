@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Ambient } from "@/components/Ambient";
 import { Cover } from "@/components/Cover";
 import { NextFill, PauseFill, PlayFill, PrevFill } from "@/components/icon";
-import { Download, Lock, LoaderCircle, Shuffle, TriangleAlert } from "@/components/icons";
+import { ChevronRight, Download, Folder, ListMusic, Lock, LoaderCircle, Shuffle, TriangleAlert } from "@/components/icons";
 import { BalalaikaMark } from "@/components/Logo";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,7 +35,8 @@ function useSharePlayer(token: string, tracks: PublicTrack[]) {
     on("play", () => setPlaying(true));
     on("pause", () => setPlaying(false));
     on("timeupdate", () => setTime(a.currentTime));
-    on("durationchange", () => setDuration(isFinite(a.duration) ? a.duration : 0));
+    // у перекодированного на лету потока длина неизвестна (Infinity) — остаётся длительность из тегов
+    on("durationchange", () => isFinite(a.duration) && a.duration > 0 && setDuration(a.duration));
     return () => {
       a.pause();
       a.removeAttribute("src");
@@ -184,10 +185,112 @@ function Locked({ token, info, onOpen }: { token: string; info: Extract<PublicSh
   );
 }
 
+type Group = { key: string; title: string; subtitle: string; cover: string | null; tracks: PublicTrack[] };
+
+/** Ссылка на папку — группы по подпапкам; остальное — по альбомам. */
+function groupTracks(data: Opened): Group[] {
+  const map = new Map<string, Group>();
+  for (const t of data.tracks) {
+    const byFolder = data.kind === "folder" && t.folder !== null;
+    const key = byFolder ? `f:${t.folder}` : `a:${t.album_id}`;
+    let g = map.get(key);
+    if (!g) {
+      let title: string;
+      let subtitle: string;
+      if (byFolder) {
+        const parts = (t.folder ?? "").split("/").filter(Boolean);
+        title = parts.length ? parts[parts.length - 1] : "Файлы в корне папки";
+        subtitle = parts.slice(0, -1).join(" / ");
+      } else {
+        title = t.album || "Без альбома";
+        subtitle = t.artist;
+      }
+      g = { key, title, subtitle, cover: t.cover, tracks: [] };
+      map.set(key, g);
+    }
+    if (!g.cover && t.cover) g.cover = t.cover;
+    g.tracks.push(t);
+  }
+  return [...map.values()];
+}
+
+function TrackRow({
+  t,
+  n,
+  active,
+  playing,
+  showCover,
+  showAlbum,
+  download,
+  onClick,
+}: {
+  t: PublicTrack;
+  n: number;
+  active: boolean;
+  playing: boolean;
+  showCover: boolean;
+  showAlbum: boolean;
+  download?: () => void;
+  onClick: () => void;
+}) {
+  return (
+    <div
+      role="listitem"
+      onClick={onClick}
+      className={cn(
+        "group grid cursor-pointer grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-2 py-2 sm:gap-4",
+        active ? "bg-surface-2/80" : "hover:bg-surface-2/60",
+      )}
+    >
+      {showCover ? (
+        <Cover src={t.cover} seed={t.album} size={96} rounded="rounded-md" className="size-10" />
+      ) : (
+        <span className={cn("num text-center text-[15px]", active ? "text-accent-ink" : "text-faint")}>
+          {active && playing ? <PauseFill className="mx-auto size-4" /> : n}
+        </span>
+      )}
+      <div className="min-w-0">
+        <div className={cn("truncate text-[15px] font-semibold", active && "text-accent-ink")}>{t.title}</div>
+        <div className="truncate text-[13px] text-muted">
+          {t.artist}
+          {showAlbum ? ` · ${t.album}` : ""}
+          <span className="hidden sm:inline"> · {t.quality}</span>
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="num w-11 text-right text-sm text-muted">{formatTime(t.duration)}</span>
+        {download && (
+          <button
+            aria-label={`Скачать «${t.title}»`}
+            onClick={(e) => {
+              e.stopPropagation();
+              download();
+            }}
+            className="flex size-9 items-center justify-center rounded-full text-faint hover:bg-surface-3 hover:text-fg"
+          >
+            <Download className="size-4" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ShareView({ token, data }: { token: string; data: Opened }) {
   const p = useSharePlayer(token, data.tracks);
   const palette = usePalette(data.cover ? `${data.cover}?size=96` : null, data.title);
   const multiAlbum = new Set(data.tracks.map((t) => t.album_id)).size > 1;
+  const groups = useMemo(() => groupTracks(data), [data]);
+  const [grouped, setGrouped] = useState(true);
+  // немного групп — раскрываем сразу; много — показываем списком папок/альбомов
+  const [open, setOpen] = useState<Set<string>>(() => new Set(groups.length <= 4 ? groups.map((g) => g.key) : []));
+  const toggleGroup = (key: string) =>
+    setOpen((s) => {
+      const n = new Set(s);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
 
   useEffect(() => {
     document.title = `${data.title} · ${data.site_name}`;
@@ -251,55 +354,99 @@ function ShareView({ token, data }: { token: string; data: Opened }) {
           {!data.allow_download && <span className="text-[13px] text-faint">Можно только слушать</span>}
         </div>
 
+        {groups.length > 1 && (
+          <div role="radiogroup" aria-label="Вид" className="flex w-max gap-1 rounded-full bg-surface-2 p-1">
+            {[
+              { v: true, label: data.kind === "folder" ? "По папкам" : "По альбомам", icon: <Folder className="size-4" /> },
+              { v: false, label: "Все треки", icon: <ListMusic className="size-4" /> },
+            ].map((o) => (
+              <button
+                key={String(o.v)}
+                role="radio"
+                aria-checked={grouped === o.v}
+                onClick={() => setGrouped(o.v)}
+                className={cn(
+                  "flex h-9 items-center gap-2 rounded-full px-3.5 text-[13px] font-bold transition",
+                  grouped === o.v ? "bg-fg text-bg" : "text-muted hover:text-fg",
+                )}
+              >
+                {o.icon} {o.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {data.tracks.length === 0 ? (
           <p className="py-10 text-center text-muted">Здесь пока пусто.</p>
-        ) : (
-          <div role="list" className="-mx-2 flex flex-col">
-            {p.queue.map((t, i) => {
-              const active = p.cur?.id === t.id;
+        ) : grouped && groups.length > 1 ? (
+          <div className="-mx-2 flex flex-col gap-2">
+            {groups.map((g) => {
+              const isOpen = open.has(g.key);
+              const playingHere = p.cur != null && g.tracks.some((t) => t.id === p.cur!.id);
               return (
-                <div
-                  role="listitem"
-                  key={`${t.id}-${i}`}
-                  onClick={() => (active ? p.toggle() : p.playAt(i))}
-                  className={cn(
-                    "group grid cursor-pointer grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-2 py-2 sm:gap-4",
-                    active ? "bg-surface-2/80" : "hover:bg-surface-2/60",
-                  )}
-                >
-                  {multiAlbum ? (
-                    <Cover src={t.cover} seed={t.album} size={96} rounded="rounded-md" className="size-10" />
-                  ) : (
-                    <span className={cn("num text-center text-[15px]", active ? "text-accent-ink" : "text-faint")}>
-                      {active && p.playing ? <PauseFill className="mx-auto size-4" /> : (t.track_no ?? i + 1)}
-                    </span>
-                  )}
-                  <div className="min-w-0">
-                    <div className={cn("truncate text-[15px] font-semibold", active && "text-accent-ink")}>{t.title}</div>
-                    <div className="truncate text-[13px] text-muted">
-                      {t.artist}
-                      {multiAlbum ? ` · ${t.album}` : ""}
-                      <span className="hidden sm:inline"> · {t.quality}</span>
+                <section key={g.key} className={cn("rounded-2xl transition", isOpen && "glass border")}>
+                  <div
+                    className="group flex cursor-pointer items-center gap-3 rounded-2xl p-2 hover:bg-surface-2/60"
+                    onClick={() => toggleGroup(g.key)}
+                    aria-expanded={isOpen}
+                  >
+                    <ChevronRight className={cn("size-4 shrink-0 text-faint transition-transform", isOpen && "rotate-90")} />
+                    <Cover src={g.cover} seed={g.title} size={120} rounded="rounded-xl" className="size-14 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className={cn("truncate text-[15px] font-bold", playingHere && "text-accent-ink")}>{g.title}</div>
+                      {g.subtitle && <div className="truncate text-[13px] text-muted">{g.subtitle}</div>}
+                      <div className="text-[12px] text-faint">
+                        {tracksLabel(g.tracks.length)} · {formatDuration(g.tracks.reduce((a, t) => a + t.duration, 0))}
+                      </div>
                     </div>
+                    <button
+                      aria-label={`Слушать «${g.title}»`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (playingHere) p.toggle();
+                        else p.playAt(0, g.tracks);
+                      }}
+                      className="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg shadow-lg shadow-black/20 transition hover:scale-105"
+                    >
+                      {playingHere && p.playing ? <PauseFill className="size-5" /> : <PlayFill className="ml-0.5 size-5" />}
+                    </button>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <span className="num w-11 text-right text-sm text-muted">{formatTime(t.duration)}</span>
-                    {data.allow_download && (
-                      <button
-                        aria-label={`Скачать «${t.title}»`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          download(`/api/s/${token}/download/${t.id}`);
-                        }}
-                        className="flex size-9 items-center justify-center rounded-full text-faint hover:bg-surface-3 hover:text-fg"
-                      >
-                        <Download className="size-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
+                  {isOpen && (
+                    <div role="list" className="flex flex-col px-1 pb-2">
+                      {g.tracks.map((t, i) => (
+                        <TrackRow
+                          key={`${t.id}-${i}`}
+                          t={t}
+                          n={t.track_no ?? i + 1}
+                          active={p.cur?.id === t.id}
+                          playing={p.playing}
+                          showCover={false}
+                          showAlbum={false}
+                          download={data.allow_download ? () => download(`/api/s/${token}/download/${t.id}`) : undefined}
+                          onClick={() => (p.cur?.id === t.id ? p.toggle() : p.playAt(i, g.tracks))}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </section>
               );
             })}
+          </div>
+        ) : (
+          <div role="list" className="-mx-2 flex flex-col">
+            {data.tracks.map((t, i) => (
+              <TrackRow
+                key={`${t.id}-${i}`}
+                t={t}
+                n={t.track_no ?? i + 1}
+                active={p.cur?.id === t.id}
+                playing={p.playing}
+                showCover={multiAlbum}
+                showAlbum={multiAlbum}
+                download={data.allow_download ? () => download(`/api/s/${token}/download/${t.id}`) : undefined}
+                onClick={() => (p.cur?.id === t.id ? p.toggle() : p.playAt(i, data.tracks))}
+              />
+            ))}
           </div>
         )}
       </div>

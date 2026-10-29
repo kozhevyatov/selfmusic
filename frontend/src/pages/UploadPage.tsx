@@ -297,15 +297,38 @@ export default function UploadPage() {
         <div className="flex flex-col gap-4">
           <Card className="flex flex-col gap-5">
             <Field id="up-target" label="Куда загружать">
-              <Select id="up-target" value={target ?? ""} onChange={(e) => setTarget(Number(e.target.value))}>
-                {d.targets.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                    {t.personal ? " (личная)" : ""}
-                  </option>
-                ))}
+              <Select
+                id="up-target"
+                value={target ?? ""}
+                onChange={(e) => {
+                  const id = Number(e.target.value);
+                  setTarget(id);
+                  // книгам важна структура папок «Автор / Серия / Книга», а не теги
+                  setOrganize(d.targets.find((t) => t.id === id)?.kind !== "audiobooks");
+                }}
+              >
+                {(["music", "audiobooks"] as const).map((k) => {
+                  const list = d.targets.filter((t) => (t.kind ?? "music") === k);
+                  if (!list.length) return null;
+                  return (
+                    <optgroup key={k} label={k === "music" ? "Музыка" : "Аудиокниги"}>
+                      {list.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                          {t.personal ? " (личная)" : ""}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
               </Select>
             </Field>
+            {d.targets.find((t) => t.id === target)?.kind === "audiobooks" && (
+              <p className="-mt-2 text-[13px] leading-relaxed text-muted">
+                Загружайте папку книги целиком. Лучше всего — «Автор / Серия / Книга»: тогда книги сами сгруппируются по авторам и сериям.
+                Обложку (cover.jpg), описание (desc.txt) и чтеца (reader.txt) можно положить рядом с файлами.
+              </p>
+            )}
             <div className="flex items-start justify-between gap-4">
               <span>
                 <span className="block text-[15px] font-bold">Разложить по тегам</span>
