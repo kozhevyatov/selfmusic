@@ -298,7 +298,7 @@ export function MiniPlayer({ onExpand }: { onExpand: () => void }) {
   const progress = usePlayer((s) => (s.duration ? s.time / s.duration : 0));
   if (!track) return null;
   return (
-    <div className="fixed inset-x-2 bottom-[calc(76px+env(safe-area-inset-bottom))] z-40 lg:hidden">
+    <div className="fixed inset-x-2 bottom-[calc(76px+var(--sab))] z-40 lg:hidden">
       <div
         role="button"
         tabIndex={0}
@@ -637,7 +637,7 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
       <Ambient colors={palette} intensity={2.4} />
       <div className="absolute inset-0 -z-10 bg-gradient-to-b from-black/10 via-black/25 to-black/60" />
 
-      <header className="flex items-center justify-between gap-4 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-2 sm:px-8">
+      <header className="flex items-center justify-between gap-4 px-4 pt-[max(1rem,var(--sat))] pb-2 sm:px-8">
         <button aria-label="Свернуть" onClick={onClose} className="flex size-11 items-center justify-center rounded-full bg-white/10 hover:bg-white/20">
           <ChevronDown />
         </button>
@@ -669,7 +669,7 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
       </header>
       <EqualizerDialog open={eqOpen} onClose={() => setEqOpen(false)} />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-6 px-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-10 lg:flex-row lg:items-stretch lg:gap-12 lg:px-14 lg:pb-10">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 px-6 pb-[max(1.5rem,var(--sab))] sm:px-10 lg:flex-row lg:items-stretch lg:gap-12 lg:px-14 lg:pb-10">
         <div className={cn("flex min-h-0 flex-1 flex-col justify-center gap-6 lg:max-w-[560px]", panelOpen && "hidden lg:flex")}>
           <div className="mx-auto w-full max-w-[min(520px,46svh)]">
             <Cover

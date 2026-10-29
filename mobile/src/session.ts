@@ -149,25 +149,32 @@ async function accessToken(force = false): Promise<string | null> {
   return refreshing;
 }
 
-/** Запрос к API от имени пользователя (с обновлением токена при 401). */
-export async function apiCall(path: string, method: string, body?: unknown): Promise<boolean> {
+/** Запрос к API от имени пользователя (с обновлением токена при 401). null — сервер недоступен. */
+export async function apiSend(path: string, method: string, body?: unknown): Promise<number | null> {
   const s = current;
-  if (!s) return false;
+  if (!s) return null;
+  let status: number | null = null;
   for (const force of [false, true]) {
     const token = await accessToken(force);
-    if (!token) return false;
+    if (!token) return status;
     try {
       const r = await getJson(`${s.server}${path}`, {
         method,
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-      if (r.status !== 401) return r.status < 400;
+      status = r.status;
+      if (r.status !== 401) return r.status;
     } catch {
-      return false;
+      return null;
     }
   }
-  return false;
+  return status;
+}
+
+export async function apiCall(path: string, method: string, body?: unknown): Promise<boolean> {
+  const status = await apiSend(path, method, body);
+  return status !== null && status < 400;
 }
 
 /** Адрес потока/обложки для системного плеера: полный, с media-токеном. */

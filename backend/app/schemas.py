@@ -207,6 +207,8 @@ class PlaylistReorder(BaseModel):
 
 class PlayIn(BaseModel):
     track_id: int
+    # когда слушали — для прослушиваний без связи (приложение отправит их позже)
+    played_at: datetime | None = None
 
 
 # ---------- общие ссылки ----------

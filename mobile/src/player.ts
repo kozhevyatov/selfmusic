@@ -11,6 +11,7 @@
  *  • останавливает музыку по таймеру сна.
  */
 import { createAudioPlaylist, setAudioModeAsync } from "expo-audio";
+import { coverPath, offline, type TrackData } from "./offline";
 import { apiCall, mediaUrl } from "./session";
 
 export type Item = {
@@ -93,8 +94,9 @@ class NativePlayer {
     return pl;
   }
 
+  // скачанный трек — из памяти телефона (без сети и без трафика), иначе — поток с сервера
   private source(it: Item) {
-    return { uri: mediaUrl(`/api/stream/${it.id}`) };
+    return { uri: offline.audioUri(it.id) ?? mediaUrl(`/api/stream/${it.id}`) };
   }
 
   private meta(it: Item) {
@@ -102,8 +104,23 @@ class NativePlayer {
       title: it.title,
       artist: it.artist,
       albumTitle: it.album,
-      artworkUrl: it.cover ? mediaUrl(it.cover.replace(/size=\d+/, "size=512")) : undefined,
+      artworkUrl: it.cover ? (offline.coverUri(it.cover) ?? mediaUrl(coverPath(it.cover, 512))) : undefined,
     };
+  }
+
+  /** Что сейчас играет — для офлайн-экрана приложения */
+  now() {
+    const it = this.current();
+    return it ? { item: it, ...this.status } : null;
+  }
+
+  async next() {
+    if (this.index + 1 < this.items.length) await this.skip(this.index + 1, true, 0);
+  }
+
+  async previous() {
+    if (this.status.time > 3 || this.index === 0) await this.seekSafe(0);
+    else await this.skip(this.index - 1, true, 0);
   }
 
   private expect(index: number) {
@@ -363,7 +380,7 @@ class NativePlayer {
     const d = duration || it.duration;
     if (time >= Math.min(240, Math.max(20, d * 0.5))) {
       this.scrobbled.add(this.playKey);
-      void apiCall("/api/plays", "POST", { track_id: it.id });
+      void offline.play(it.id); // без связи — запомнит и отправит позже
     }
   }
 
@@ -377,3 +394,18 @@ class NativePlayer {
 }
 
 export const player = new NativePlayer();
+
+/** Трек из скачанного → элемент очереди (как его собирает сайт) */
+export function itemOf(track: TrackData, gain: number): Item {
+  return {
+    id: track.id,
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    cover: track.cover,
+    duration: track.duration,
+    gain,
+    book: null,
+    track,
+  };
+}

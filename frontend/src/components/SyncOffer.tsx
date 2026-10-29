@@ -17,7 +17,7 @@ export function SyncOfferCard() {
       className={cn(
         "glass animate-sheet-up fixed inset-x-2 z-40 flex items-center gap-3 rounded-2xl border p-2.5 pr-2 shadow-2xl shadow-black/40",
         "lg:inset-x-auto lg:right-6 lg:w-[460px]",
-        hasTrack ? "bottom-[calc(148px+env(safe-area-inset-bottom))] lg:bottom-[112px]" : "bottom-[calc(80px+env(safe-area-inset-bottom))] lg:bottom-6",
+        hasTrack ? "bottom-[calc(148px+var(--sab))] lg:bottom-[112px]" : "bottom-[calc(80px+var(--sab))] lg:bottom-6",
       )}
     >
       <div className="relative size-12 shrink-0">
@@ -51,7 +51,7 @@ export function UpdateCard() {
   return (
     <div
       role="status"
-      className="glass animate-sheet-up fixed inset-x-2 top-[calc(env(safe-area-inset-top)+64px)] z-40 mx-auto flex max-w-md items-center gap-3 rounded-2xl border p-2.5 pl-4 shadow-2xl shadow-black/40 lg:top-4"
+      className="glass animate-sheet-up fixed inset-x-2 top-[calc(var(--sat)+64px)] z-40 mx-auto flex max-w-md items-center gap-3 rounded-2xl border p-2.5 pl-4 shadow-2xl shadow-black/40 lg:top-4"
     >
       <RefreshCw className="size-5 shrink-0 text-accent-ink" />
       <div className="min-w-0 flex-1 text-[14px] font-semibold">Вышла новая версия SelfMusic</div>

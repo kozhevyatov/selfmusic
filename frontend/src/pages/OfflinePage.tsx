@@ -21,6 +21,7 @@ import {
   type OfflineCollection,
   type OfflineQuality,
 } from "@/lib/offline";
+import { isNative } from "@/lib/native";
 import { player } from "@/lib/player";
 import { Link } from "@/lib/router";
 import { toast } from "@/lib/toast";
@@ -120,7 +121,7 @@ export default function OfflinePage() {
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
         <span>
           Занято <b>{formatSize(offlineSize())}</b>
-          {est && est.quota > 0 && <span className="text-faint"> · свободно для приложения ≈ {formatSize(Math.max(0, est.quota - est.usage))}</span>}
+          {est && est.quota > 0 && <span className="text-faint"> · {isNative ? "свободно на телефоне" : "свободно для приложения"} ≈ {formatSize(Math.max(0, est.quota - est.usage))}</span>}
         </span>
         <label className="flex items-center gap-2 text-muted">
           Качество новых загрузок
@@ -166,10 +167,17 @@ export default function OfflinePage() {
 
       <div className="flex gap-2.5 rounded-2xl bg-surface-2/50 p-4 text-[13px] text-muted">
         <Info className="mt-0.5 size-4 shrink-0 text-accent-ink" />
-        <span>
-          Скачанное хранится в этом браузере (или в установленном приложении). На iPhone приложение нужно установить на экран
-          «Домой» — иначе iOS может очистить хранилище, если вы долго не открываете сайт.
-        </span>
+        {isNative ? (
+          <span>
+            Скачанное хранится в памяти телефона, внутри приложения. Скачанные треки играют из памяти и при хорошей связи —
+            без трафика. Если удалить приложение, скачанное удалится вместе с ним.
+          </span>
+        ) : (
+          <span>
+            Скачанное хранится в этом браузере (или в установленном приложении). На iPhone приложение нужно установить на экран
+            «Домой» — иначе iOS может очистить хранилище, если вы долго не открываете сайт.
+          </span>
+        )}
       </div>
       {s.index.collections.length > 0 && (
         <button

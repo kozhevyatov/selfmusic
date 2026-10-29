@@ -460,7 +460,14 @@ def track_lyrics(track_id: int, db: Session = Depends(get_db), user: User = Depe
 @router.post("/plays")
 def record_play(data: PlayIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     track = _visible_track(db, user, data.track_id)
-    db.add(Play(user_id=user.id, track_id=track.id, album_id=track.album_id))
+    now = datetime.now(timezone.utc)
+    at = data.played_at
+    if at is not None:
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        # не из будущего и не старше 60 дней
+        at = min(at, now) if at > now - timedelta(days=60) else None
+    db.add(Play(user_id=user.id, track_id=track.id, album_id=track.album_id, played_at=at or now))
     db.commit()
     return {"ok": True}
 

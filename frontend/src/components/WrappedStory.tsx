@@ -419,7 +419,7 @@ export function WrappedStory({ data, onClose }: { data: StatsResult; onClose: ()
           go(e.clientX - rect.left < rect.width * 0.3 ? -1 : 1);
         }}
       >
-        <div className="flex gap-1 px-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+        <div className="flex gap-1 px-3 pt-[max(0.75rem,var(--sat))]">
           {slides.map((s, i) => (
             <div key={s.key} className="h-[3px] flex-1 overflow-hidden rounded-full bg-white/25">
               <div className="h-full bg-white" style={{ width: `${i < index ? 100 : i === index ? progress * 100 : 0}%` }} />
@@ -437,7 +437,7 @@ export function WrappedStory({ data, onClose }: { data: StatsResult; onClose: ()
             <X className="size-5" />
           </button>
         </div>
-        <div key={slide.key} className="flex min-h-0 flex-1 flex-col justify-center gap-5 overflow-y-auto px-6 pb-[max(2rem,env(safe-area-inset-bottom))] sm:px-9">
+        <div key={slide.key} className="flex min-h-0 flex-1 flex-col justify-center gap-5 overflow-y-auto px-6 pb-[max(2rem,var(--sab))] sm:px-9">
           {slide.node}
         </div>
       </div>

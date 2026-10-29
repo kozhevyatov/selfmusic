@@ -258,7 +258,7 @@ export function TrackList({
         <div
           className={cn(
             "glass fixed inset-x-2 z-50 flex flex-wrap items-center gap-2 rounded-2xl border p-2 pl-4 shadow-2xl shadow-black/30 lg:right-6 lg:left-[284px]",
-            hasTrack ? "bottom-[calc(150px+env(safe-area-inset-bottom))] lg:bottom-[104px]" : "bottom-[calc(84px+env(safe-area-inset-bottom))] lg:bottom-6",
+            hasTrack ? "bottom-[calc(150px+var(--sab))] lg:bottom-[104px]" : "bottom-[calc(84px+var(--sab))] lg:bottom-6",
           )}
         >
           <span className="mr-auto text-sm font-extrabold">Выбрано: {chosen.length}</span>

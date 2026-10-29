@@ -1,23 +1,26 @@
 {
   "name": "selfmusic-mobile",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
     "start": "expo start --dev-client",
     "android": "expo run:android",
-    "build:apk": "eas build -p android --profile preview",
-    "doctor": "npx expo-doctor"
+    "build:apk": "eas build -p android --profile production",
+    "doctor": "npx expo-doctor",
+    "update": "eas update --channel production"
   },
   "dependencies": {
     "expo": "~58.0.0",
     "expo-audio": "*",
     "expo-build-properties": "*",
     "expo-constants": "*",
+    "expo-file-system": "*",
     "expo-secure-store": "*",
     "expo-splash-screen": "*",
     "expo-status-bar": "*",
     "expo-system-ui": "*",
+    "expo-updates": "*",
     "react": "19.3.0",
     "react-native": "0.88.0",
     "react-native-safe-area-context": "~5.10.1",

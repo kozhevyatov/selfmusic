@@ -10,7 +10,15 @@
  * приложение → сайт — вызовом window.__selfmusicNative.onEvent(...).
  */
 
-export type NativeInfo = { platform: string; appVersion: string; refreshToken?: string | null };
+export type Insets = { top: number; bottom: number };
+
+export type NativeInfo = {
+  platform: string;
+  appVersion: string;
+  refreshToken?: string | null;
+  insets?: Insets; // отступы системных панелей: WebView в приложении — на весь экран
+  offline?: boolean; // приложение умеет скачивать музыку само (с версии 1.1)
+};
 
 export type NativeItem = {
   id: number;
@@ -40,7 +48,11 @@ export type NativeEvent =
   | { type: "error"; message: string; id: number | null }
   | { type: "sleep-done" }
   // ответ на hello: что сейчас в нативном плеере (страницу перезапустили, а музыка играет)
-  | { type: "session"; tracks: unknown[]; index: number; time: number; duration: number; playing: boolean };
+  | { type: "session"; tracks: unknown[]; index: number; time: number; duration: number; playing: boolean }
+  | { type: "insets"; top: number; bottom: number }
+  // скачанное в приложении: индекс целиком (когда меняется) и ход загрузок (часто)
+  | { type: "offline"; index: unknown; free: number }
+  | { type: "offline-progress"; progress: Record<string, unknown> };
 
 type Bridge = { postMessage(data: string): void };
 
@@ -89,4 +101,15 @@ if (isNative) {
     },
   };
   document.documentElement.dataset.native = "android";
+  applyInsets(nativeInfo?.insets);
+  onNative((e) => {
+    if (e.type === "insets") applyInsets(e);
+  });
+}
+
+function applyInsets(i?: Insets) {
+  if (!i) return;
+  const st = document.documentElement.style;
+  st.setProperty("--native-sat", `${Math.max(0, i.top)}px`);
+  st.setProperty("--native-sab", `${Math.max(0, i.bottom)}px`);
 }

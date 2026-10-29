@@ -1,4 +1,5 @@
 import { isNative } from "@/lib/native";
+import { offlineSupported } from "@/lib/offline";
 import { BookOpen, ChartColumn, ChevronRight, CircleCheck, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Sparkles, Upload } from "@/components/icons";
 import { booksAvailable } from "@/components/LibraryScope";
 import { PageHeader } from "@/components/Section";
@@ -20,7 +21,7 @@ export default function LibraryPage() {
     { to: "/stats", label: "Статистика и итоги", icon: ChartColumn },
     { to: "/playlists", label: "Плейлисты", icon: ListMusic },
     { to: "/folders", label: "Папки", icon: Folder },
-    ...(isNative ? [] : [{ to: "/offline", label: "Скачанное", icon: CircleCheck }]),
+    ...(isNative && !offlineSupported ? [] : [{ to: "/offline", label: "Скачанное", icon: CircleCheck }]),
     ...(user?.is_admin || user?.can_share ? [{ to: "/shares", label: "Общие ссылки", icon: LinkIcon }] : []),
     ...(user?.is_admin || user?.upload_mode !== "none" ? [{ to: "/upload", label: "Загрузить музыку", icon: Upload }] : []),
   ];

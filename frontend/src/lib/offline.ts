@@ -6,10 +6,15 @@
  *   /__offline/audio/<id>   — аудиофайл трека
  *   /__offline/index.json   — что скачано: подборки и данные треков
  *   /api/cover/...          — обложки нужных размеров (по тем же адресам, что запрашивает интерфейс)
+ *
+ * В Android-приложении файлы качает и хранит само приложение (в памяти телефона), а сайт
+ * только показывает индекс, который оно присылает, и передаёт команды. Обложки для интерфейса
+ * по-прежнему кладём в Cache Storage — если WebView его поддерживает (сайт по https).
  */
-import { isNative } from "./native";
+import { isNative, nativeInfo, onNative, sendNative } from "./native";
 import { useSyncExternalStore } from "react";
 import { coverUrl, type Track } from "./api";
+import { normalizeGain } from "./audio";
 
 export const OFFLINE_CACHE = "sm-offline-v1";
 const INDEX_URL = "/__offline/index.json";
@@ -63,8 +68,10 @@ export function useOfflineState(): State {
   );
 }
 
-// В Android-приложении звук играет нативный плеер — кэш браузера ему недоступен (скачивание — позже, нативное)
-export const offlineSupported = supported && !isNative;
+// В приложении качает оно само (версии до 1.1 не умели — там кнопок нет)
+const nativeOffline = isNative && Boolean(nativeInfo?.offline);
+export const offlineSupported = isNative ? nativeOffline : supported;
+let nativeFree = 0;
 
 // ---------------- индекс ----------------
 
@@ -73,6 +80,17 @@ async function cache() {
 }
 
 async function loadIndex() {
+  if (nativeOffline) {
+    // индекс пришлёт приложение (и будет присылать при каждом изменении)
+    onNative((e) => {
+      if (e.type === "offline") {
+        nativeFree = e.free;
+        emit({ ready: true, index: e.index as Index });
+      } else if (e.type === "offline-progress") emit({ progress: e.progress as Record<string, Progress> });
+    });
+    sendNative("offline-state");
+    return;
+  }
   if (!supported) return emit({ ready: true });
   try {
     const hit = await (await cache()).match(INDEX_URL);
@@ -169,7 +187,7 @@ async function fetchTrack(track: Track, quality: OfflineQuality, onBytes: (n: nu
 }
 
 async function fetchCovers(cover: string | null) {
-  if (!cover) return;
+  if (!cover || !supported) return;
   const c = await cache();
   await Promise.all(
     COVER_SIZES.map(async (s) => {
@@ -224,7 +242,18 @@ function pump() {
 
 /** Скачать подборку (альбом, плейлист…). Уже скачанные треки не качаются повторно. */
 export async function downloadCollection(c: Omit<OfflineCollection, "track_ids" | "saved_at">, tracks: Track[]) {
-  if (!supported || !tracks.length) return;
+  if (!offlineSupported || !tracks.length) return;
+  if (nativeOffline) {
+    const col: OfflineCollection = { ...c, track_ids: tracks.map((t) => t.id), saved_at: new Date().toISOString() };
+    // громкость выравнивания — чтобы приложение без сайта играло скачанное так же
+    const gains = Object.fromEntries(tracks.map((t) => [t.id, Math.min(1, normalizeGain(t))]));
+    sendNative("offline-download", { collection: col, tracks, quality: getOfflineQuality(), gains });
+    // обложки для интерфейса без сети — в кэш WebView, если он есть
+    void (async () => {
+      for (const cover of new Set([c.cover, ...tracks.map((t) => t.cover)])) await fetchCovers(cover);
+    })();
+    return;
+  }
   void requestPersistence();
   const existing = state.index.collections.filter((x) => x.key !== c.key);
   const col: OfflineCollection = { ...c, track_ids: tracks.map((t) => t.id), saved_at: new Date().toISOString() };
@@ -237,6 +266,7 @@ export async function downloadCollection(c: Omit<OfflineCollection, "track_ids" 
 
 /** Удалить подборку; треки, которых нет в других подборках, тоже удаляются */
 export async function removeCollection(key: string) {
+  if (nativeOffline) return sendNative("offline-remove", { key });
   const col = state.index.collections.find((c) => c.key === key);
   if (!col) return;
   for (let i = queue.length - 1; i >= 0; i--) if (queue[i].key === key) queue.splice(i, 1);
@@ -255,6 +285,11 @@ export async function removeCollection(key: string) {
 }
 
 export async function removeAll() {
+  if (nativeOffline) {
+    sendNative("offline-clear");
+    if (supported) await caches.delete(OFFLINE_CACHE).catch(() => false);
+    return;
+  }
   queue.length = 0;
   await caches.delete(OFFLINE_CACHE);
   emit({ index: { collections: [], tracks: {} }, progress: {} });
@@ -262,6 +297,10 @@ export async function removeAll() {
 }
 
 export async function storageEstimate(): Promise<{ usage: number; quota: number } | null> {
+  if (nativeOffline) {
+    const usage = offlineSize();
+    return nativeFree > 0 ? { usage, quota: usage + nativeFree } : null;
+  }
   try {
     const e = await navigator.storage.estimate();
     return { usage: e.usage ?? 0, quota: e.quota ?? 0 };

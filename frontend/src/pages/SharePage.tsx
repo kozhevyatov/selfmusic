@@ -452,7 +452,7 @@ function ShareView({ token, data }: { token: string; data: Opened }) {
       </div>
 
       {p.cur && (
-        <div className="glass fixed inset-x-2 bottom-[max(0.5rem,env(safe-area-inset-bottom))] z-40 mx-auto max-w-4xl rounded-2xl border p-3 shadow-2xl shadow-black/30 sm:inset-x-6">
+        <div className="glass fixed inset-x-2 bottom-[max(0.5rem,var(--sab))] z-40 mx-auto max-w-4xl rounded-2xl border p-3 shadow-2xl shadow-black/30 sm:inset-x-6">
           <div className="flex items-center gap-3">
             <Cover src={p.cur.cover} seed={p.cur.album} size={96} rounded="rounded-lg" className="size-12 shrink-0" />
             <div className="min-w-0 flex-1">

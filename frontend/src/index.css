@@ -2,6 +2,11 @@
 
 @custom-variant dark (&:is(.dark *));
 
+html[data-native] {
+  --sat: var(--native-sat, 0px);
+  --sab: var(--native-sab, 0px);
+}
+
 /*
  * SelfMusic — визуальная система.
  * Тёмная тема по умолчанию, светлая — по переключателю. Один акцентный цвет на выбор
@@ -9,6 +14,10 @@
  * Шрифты: Manrope — интерфейс, Unbounded — заголовки и логотип.
  */
 :root {
+  /* Отступы от системных панелей (вырез, жестовая полоска). В Android-приложении их присылает
+     само приложение: WebView там на весь экран, а env() во WebView бывает неточным. */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
   --radius: 0.875rem;
   --bg: #f6f4f0;
   --surface: #ffffff;

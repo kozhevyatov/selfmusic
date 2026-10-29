@@ -1,4 +1,5 @@
 import { isNative } from "@/lib/native";
+import { offlineSupported } from "@/lib/offline";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -53,7 +54,7 @@ const NAV = [
   { to: "/favorites", label: "Избранное", icon: Heart },
   { to: "/stats", label: "Статистика", icon: ChartColumn },
   { to: "/folders", label: "Папки", icon: Folder },
-  ...(isNative ? [] : [{ to: "/offline", label: "Скачанное", icon: CircleCheck }]),
+  ...(isNative && !offlineSupported ? [] : [{ to: "/offline", label: "Скачанное", icon: CircleCheck }]),
 ];
 
 const TABS = [
@@ -220,7 +221,7 @@ function Sidebar() {
 function MobileHeader() {
   const settings = useQuery(["settings"], api.settings.get, { staleTime: 300_000 });
   return (
-    <header className="glass sticky top-0 z-30 flex items-center justify-between gap-3 border-b px-4 pt-[max(0.6rem,env(safe-area-inset-top))] pb-2.5 lg:hidden">
+    <header className="glass sticky top-0 z-30 flex items-center justify-between gap-3 border-b px-4 pt-[max(0.6rem,var(--sat))] pb-2.5 lg:hidden">
       <Link to="/" className="flex items-center gap-2.5" aria-label="На главную">
         <span className="inline-flex size-8 items-center justify-center rounded-[9px] bg-accent text-accent-fg">
           <BalalaikaMark className="size-5" />
@@ -241,7 +242,7 @@ function TabBar() {
   return (
     <nav
       aria-label="Разделы"
-      className="glass fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t pb-[env(safe-area-inset-bottom)] lg:hidden"
+      className="glass fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t pb-[var(--sab)] lg:hidden"
     >
       {TABS.map(({ to, label, icon: Icon }) => {
         const active = to === "/library" ? libraryPaths.some((p) => isActive(pathname, p)) : isActive(pathname, to);
@@ -310,7 +311,7 @@ export function Layout({ children }: { children: ReactNode }) {
         <main
           className={cn(
             "mx-auto w-full max-w-[1500px] flex-1 px-4 pt-5 sm:px-6 lg:px-10 lg:pt-8",
-            track ? "pb-[170px] lg:pb-[130px]" : "pb-[110px] lg:pb-12",
+            track ? "pb-[calc(170px+var(--sab))] lg:pb-[130px]" : "pb-[calc(110px+var(--sab))] lg:pb-12",
           )}
         >
           {offline && <OfflineBanner />}

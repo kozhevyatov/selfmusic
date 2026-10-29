@@ -2,9 +2,11 @@ import Constants from "expo-constants";
 import { StatusBar } from "expo-status-bar";
 import * as SystemUI from "expo-system-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, BackHandler, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, BackHandler, Linking, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import { offline, type Collection, type OfflineEvent, type TrackData } from "./offline";
+import { OfflineScreen } from "./OfflineScreen";
 import { player, type Item, type PlayerEvent } from "./player";
 import { updateTokens, type Session } from "./session";
 import { colors } from "./theme";
@@ -24,6 +26,14 @@ export function WebScreen({ session, onLogout }: { session: Session; onLogout: (
   const [theme, setTheme] = useState({ dark: true, background: colors.bg });
   const [failed, setFailed] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const insetsRef = useRef({ top: insets.top, bottom: insets.bottom });
+  insetsRef.current = { top: insets.top, bottom: insets.bottom };
+
+  // скачанное этого сервера и пользователя
+  useEffect(() => {
+    offline.open(session);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.server, session.username]);
 
   // Данные для страницы — до загрузки её скриптов (по ним сайт понимает, что он в приложении)
   const inject = useMemo(
@@ -32,13 +42,16 @@ export function WebScreen({ session, onLogout }: { session: Session; onLogout: (
         platform: "android",
         appVersion: Constants.expoConfig?.version ?? "1",
         refreshToken: session.refresh,
+        // WebView — на весь экран, под системными панелями: отступы сайт берёт отсюда
+        insets: insetsRef.current,
+        offline: true, // приложение качает музыку для офлайна само
       })};true;`,
     // токен нужен только при загрузке страницы — дальше сайт живёт своей сессией
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [session.server],
   );
 
-  const send = useCallback((e: PlayerEvent) => {
+  const send = useCallback((e: PlayerEvent | OfflineEvent | { type: "insets"; top: number; bottom: number }) => {
     web.current?.injectJavaScript(`window.__selfmusicNative&&window.__selfmusicNative.onEvent(${JSON.stringify(e)});true;`);
   }, []);
 
@@ -55,13 +68,50 @@ export function WebScreen({ session, onLogout }: { session: Session; onLogout: (
     [send],
   );
 
+  // Скачивание → страница. Ход загрузки в фоне не шлём — пришлём состояние при возвращении.
+  useEffect(
+    () =>
+      offline.on((e) => {
+        if (e.type === "offline-progress" && !active.current) return;
+        send(e);
+      }),
+    [send],
+  );
+
+  // Повернули экран — отступы другие
+  useEffect(() => {
+    send({ type: "insets", top: insets.top, bottom: insets.bottom });
+  }, [insets.top, insets.bottom, send]);
+
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => {
       active.current = s === "active";
-      if (active.current && lastStatus.current) send(lastStatus.current);
+      if (!active.current) return;
+      if (lastStatus.current) send(lastStatus.current);
+      offline.state();
     });
     return () => sub.remove();
   }, [send]);
+
+  const retry = useCallback(() => {
+    setFailed(null);
+    setLoading(true);
+    web.current?.reload();
+  }, []);
+
+  // Нет связи — раз в 15 секунд проверяем, не появился ли сервер
+  useEffect(() => {
+    if (!failed) return;
+    const t = setInterval(async () => {
+      try {
+        const r = await fetch(`${session.server}/api/health`, { cache: "no-store" } as RequestInit);
+        if (r.ok) retry();
+      } catch {
+        /* всё ещё нет */
+      }
+    }, 15000);
+    return () => clearInterval(t);
+  }, [failed, retry, session.server]);
 
   // Кнопка «Назад» Android: сначала по истории страницы
   useEffect(() => {
@@ -132,6 +182,18 @@ export function WebScreen({ session, onLogout }: { session: Session; onLogout: (
           player.stop();
           onLogout();
           break;
+        case "offline-state":
+          offline.state();
+          break;
+        case "offline-download":
+          offline.download(m.collection as Collection, m.tracks as TrackData[], String(m.quality || "192"), (m.gains as Record<string, number>) ?? {});
+          break;
+        case "offline-remove":
+          offline.remove(String(m.key));
+          break;
+        case "offline-clear":
+          offline.clear();
+          break;
         case "theme":
           setTheme({ dark: Boolean(m.dark), background: String(m.background || colors.bg) });
           break;
@@ -146,27 +208,9 @@ export function WebScreen({ session, onLogout }: { session: Session; onLogout: (
   }, [session.server]);
 
   return (
-    <View style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <StatusBar style={theme.dark ? "light" : "dark"} />
-      {failed ? (
-        <View style={styles.center}>
-          <Text style={styles.failTitle}>Сервер недоступен</Text>
-          <Text style={styles.failText}>{failed}</Text>
-          <Pressable
-            style={styles.button}
-            onPress={() => {
-              setFailed(null);
-              setLoading(true);
-              web.current?.reload();
-            }}
-          >
-            <Text style={styles.buttonText}>Повторить</Text>
-          </Pressable>
-          <Pressable onPress={onLogout} style={{ padding: 12 }}>
-            <Text style={styles.link}>Другой сервер</Text>
-          </Pressable>
-        </View>
-      ) : null}
+    <View style={[styles.root, { backgroundColor: theme.background }]}>
+      <StatusBar style={failed ? "light" : theme.dark ? "light" : "dark"} />
+      {failed ? <OfflineScreen error={failed} onRetry={retry} onLogout={onLogout} /> : null}
       <WebView
         ref={web}
         source={{ uri: session.server }}
@@ -182,8 +226,12 @@ export function WebScreen({ session, onLogout }: { session: Session; onLogout: (
         textZoom={100}
         allowFileAccess
         onNavigationStateChange={(s) => (canGoBack.current = s.canGoBack)}
-        onLoadEnd={() => setLoading(false)}
-        onError={(e) => setFailed(e.nativeEvent.description || "Проверьте подключение к сети")}
+        onLoadEnd={() => {
+          setLoading(false);
+          send({ type: "insets", ...insetsRef.current });
+          void offline.flushPlays(); // прослушивания, накопленные без связи
+        }}
+        onError={(e) => setFailed(friendly(e.nativeEvent.description))}
         onHttpError={(e) => {
           if (e.nativeEvent.statusCode >= 500 && e.nativeEvent.url.replace(/\/$/, "") === session.server) setFailed(`Ошибка сервера ${e.nativeEvent.statusCode}`);
         }}
@@ -207,14 +255,15 @@ export function WebScreen({ session, onLogout }: { session: Session; onLogout: (
   );
 }
 
+function friendly(description?: string) {
+  if (!description || /net::ERR_|timed out|unreachable|refused|resolve/i.test(description))
+    return "Проверьте интернет или что сервер включён. Скачанная музыка играет и без связи.";
+  return description;
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
   web: { flex: 1 },
   hidden: { height: 0, flex: 0, opacity: 0 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, padding: 24 },
-  failTitle: { color: colors.fg, fontSize: 22, fontWeight: "800" },
-  failText: { color: colors.muted, fontSize: 14, textAlign: "center" },
-  button: { height: 48, paddingHorizontal: 28, borderRadius: 24, backgroundColor: colors.accent, alignItems: "center", justifyContent: "center", marginTop: 8 },
-  buttonText: { color: colors.accentFg, fontSize: 15, fontWeight: "800" },
-  link: { color: colors.muted, fontSize: 14, fontWeight: "700" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
 });
