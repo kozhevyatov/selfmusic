@@ -748,6 +748,14 @@ scanner = Scanner()
 
 
 def _on_db_ready() -> None:
+    # до сканера: личные папки в раскладку media/<логин>/music|books (один раз)
+    try:
+        from .layout import migrate_layout  # noqa: PLC0415
+
+        with index_lock, dbmod.session_scope() as db:
+            migrate_layout(db)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Раскладка личных папок не обновлена: %s", exc)
     scanner.start_scheduler()
 
 

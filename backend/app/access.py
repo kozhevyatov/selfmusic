@@ -102,17 +102,13 @@ def _slug(name: str) -> str:
 
 
 def personal_library(db: Session, user: User, create: bool = False, kind: str = "music") -> Library | None:
-    """Личная папка пользователя: музыка («Моя музыка») или аудиокниги («Мои аудиокниги»)."""
-    lib = db.scalar(select(Library).where(Library.owner_id == user.id, Library.kind == kind))
+    """Личная папка пользователя: media/<логин>/music («Моя музыка») или media/<логин>/books («Мои аудиокниги»)."""
+    from .layout import SUBDIR, user_home  # noqa: PLC0415
+
+    lib = db.scalar(select(Library).where(Library.owner_id == user.id, Library.kind == kind, Library.hidden_of.is_(None)))
     if lib or not create:
         return lib
-    # Имя папки — по логину, но «ivan_» и «ivan» дают один slug, а папка удалённого
-    # пользователя может остаться на диске. Чужую или непустую папку не берём — добавляем id.
-    slug = _slug(user.username) + ("-books" if kind == "audiobooks" else "")
-    path = (UPLOAD_ROOT / slug).resolve()
-    taken = db.scalar(select(Library.id).where(Library.path == path.as_posix()))
-    if taken or (path.exists() and any(p for p in path.iterdir() if not p.name.startswith((".", "@")))):
-        path = (UPLOAD_ROOT / f"{slug}-{user.id}").resolve()
+    path = (user_home(db, user) / SUBDIR[kind]).resolve()
     path.mkdir(parents=True, exist_ok=True)
     title = "Мои аудиокниги" if kind == "audiobooks" else "Моя музыка"
     lib = Library(

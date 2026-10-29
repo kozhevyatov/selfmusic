@@ -58,7 +58,7 @@ volumes:
 ```
 
 - **`:ro` — только чтение.** Слушать можно, но загружать в эту папку и править теги нельзя. Уберите `:ro`, если это нужно.
-- **Личные папки пользователей** для загрузок создаются в `/uploads`, по умолчанию это `./uploads` рядом с проектом. Их можно хранить и на общем томе, например `- /volume1/music/Загрузки:/uploads`.
+- **Личные папки пользователей** создаются в `media/<логин>/music` и `media/<логин>/books` (внутри контейнера — `/uploads`). При смене логина папка переименовывается сама.
 - **Владелец файлов.** Чтобы загруженные файлы принадлежали вашему пользователю DSM, а не root, раскомментируйте `user: "UID:GID"`.
 
 ### База данных: MariaDB на сервере
@@ -77,32 +77,41 @@ volumes:
 
 ## Synology: установка и автодеплой из Gitea
 
-Схема та же, что у остальных проектов:
+Раскладка на сервере — код отдельно от данных:
 
-- код — git-клон в `/volume1/docker/selfmusic`;
-- скрипт деплоя и лог лежат отдельно от репозитория: `/volume1/docker/deploy/selfmusic-deploy.sh` и `selfmusic-deploy.log`;
-- Планировщик задач DSM запускает скрипт по расписанию.
+```
+/volume1/docker/selfmusic/
+├── app/      git-клон (код; автодеплой обновляет только его)
+├── data/     конфиг, ключ, аватарки, кэш (и база, если SQLite)
+├── media/    личные папки пользователей: <логин>/music, <логин>/books
+└── .env      настройки этого сервера
+```
 
-При новых коммитах скрипт пересобирает контейнер (`docker compose up -d --build`). Папки `data/` и `uploads/` в `.gitignore`, обновление их не трогает. Если сборка упала, продолжает работать предыдущая версия, а ошибка остаётся в логе.
+Скрипт деплоя и лог лежат отдельно: `/volume1/docker/deploy/selfmusic-deploy.sh` и `selfmusic-deploy.log`. Планировщик задач DSM запускает скрипт по расписанию; при новых коммитах он пересобирает контейнер. Если сборка упала, продолжает работать предыдущая версия, а ошибка остаётся в логе.
 
 ### 1. Клонирование (один раз, по SSH под root)
 
 ```bash
-git clone https://git.nskarl.ru/nskarl/selfmusic.git /volume1/docker/selfmusic
+mkdir -p /volume1/docker/selfmusic
+git clone https://git.nskarl.ru/nskarl/selfmusic.git /volume1/docker/selfmusic/app
 ```
 
-Если папка уже создана и пустая, клонируйте в неё же, указав `.` из самой папки. Авторизуйтесь так же, как в клонах других проектов.
+### 2. Настройки сервера — `.env`
 
-### 2. Папки с музыкой
+`/volume1/docker/selfmusic/.env`:
 
-В `docker-compose.yml` уже смонтирована `/volume1/music` (только чтение). Свои пути удобнее задать в файле `docker-compose.override.yml` рядом с проектом. Docker Compose подхватит его сам, он не в git, и автодеплой (`git reset --hard`) его не трогает:
+```
+MUSIC_DIR=/volume2/music          # общая музыка (только чтение)
+BOOKS_DIR=/volume2/audiobooks     # общие аудиокниги — необязательно
+```
+
+`data/` и `media/` скрипт создаст сам. Дополнительные папки с музыкой можно подключить в `app/docker-compose.override.yml` (он не в git, автодеплой его не трогает):
 
 ```yaml
 services:
   app:
     volumes:
       - /volume1/vinyl:/music/vinyl:ro
-      - /volume1/music/Загрузки:/music/uploads   # без :ro — сюда можно загружать
 ```
 
 ### 3. Скрипт деплоя
@@ -136,11 +145,7 @@ sh /volume1/docker/deploy/selfmusic-deploy.sh
 
 Перед первым запуском на публичном домене задайте `SETUP_TOKEN` в `docker-compose.yml`, чтобы мастер настройки не прошёл кто-то чужой.
 
-**Бэкап:**
-- `/volume1/docker/selfmusic/data` — конфиг, ключ, для SQLite ещё и сама база;
-- `/volume1/docker/selfmusic/uploads` — загруженная музыка.
-
-Базу MariaDB бэкапьте вместе с остальными базами сервера. Кэш обложек (`data/cache`) можно не бэкапить.
+**Бэкап и перенос на другой сервер:** `data/` (без `data/cache`), `media/`, `.env` и дамп базы MariaDB. Папку `app/` переносить не нужно — на новом сервере её проще склонировать заново. Главное в `data/` — `secret.key`: без него все выйдут из аккаунтов, а пароли для приложений придётся создавать заново.
 
 ## Приложения для телефона (Subsonic)
 
@@ -181,7 +186,7 @@ sh /volume1/docker/deploy/selfmusic-deploy.sh
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-DATA_DIR=../data MEDIA_ROOT=~/Music UPLOAD_ROOT=../uploads uvicorn app.main:app --reload --port 1332
+DATA_DIR=../data MEDIA_ROOT=~/Music UPLOAD_ROOT=../media uvicorn app.main:app --reload --port 1332
 
 # фронтенд (в другом терминале)
 cd frontend

@@ -44,6 +44,10 @@ def update_profile(data: ProfileUpdate, db: Session = Depends(get_db), user: Use
         if db.scalar(select(func.count()).select_from(User).where(User.username == data.username, User.id != user.id)):
             raise HTTPException(409, "Этот логин уже занят")
         user.username = data.username
+        db.flush()
+        from ..layout import rename_home  # noqa: PLC0415
+
+        rename_home(db, user)
     if data.email is not None:
         email = data.email.strip().lower()
         if email != user.email:
