@@ -6,7 +6,7 @@
  * - СКАЧАННОЕ (офлайн): треки и обложки из кэша sm-offline-v1 отдаются вместо сети,
  *   с поддержкой Range — без этого не работает перемотка, а Safari вообще не играет.
  */
-const VERSION = "v2";
+const VERSION = "v3";
 const OFFLINE = "sm-offline-v1";
 const SHELL = `shell-${VERSION}`;
 const STATIC = `static-${VERSION}`;
@@ -89,26 +89,15 @@ async function offlineAudio(request, id) {
   });
 }
 
-// id скачанных треков — чтобы перехватывать только их, а обычный поток не трогать
-let offlineIds = null;
-async function loadOfflineIds() {
-  try {
-    const hit = await (await caches.open(OFFLINE)).match("/__offline/index.json");
-    const index = hit ? await hit.json() : { tracks: {} };
-    offlineIds = new Set(Object.keys(index.tracks || {}));
-  } catch {
-    offlineIds = new Set();
-  }
-}
-loadOfflineIds();
-self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "offline-updated") event.waitUntil(loadOfflineIds());
-});
-
 async function audio(request, id) {
+  // Скачанный трек — из хранилища (с поддержкой Range); если его там уже нет — из сети
   const local = await offlineAudio(request, id);
-  if (local) return local;
-  return fetch(request);
+  return local || fetch(new URL(`/api/stream/${id}`, location.origin), { credentials: "include", headers: rangeHeader(request) });
+}
+
+function rangeHeader(request) {
+  const range = request.headers.get("range");
+  return range ? { Range: range } : {};
 }
 
 async function cover(request) {
@@ -132,8 +121,9 @@ self.addEventListener("fetch", (event) => {
     return event.respondWith(cacheFirst(request, STATIC));
   // Обложки: в адресе есть ?v=<время изменения>, поэтому кэш безопасен
   if (url.pathname.startsWith("/api/cover/") && url.searchParams.has("v")) return event.respondWith(cover(request));
-  // Поток: если трек скачан — играем из хранилища (и без сети, и экономя трафик)
+  // Поток: перехватываем только скачанные треки (страница помечает их ?dl=1) — играем из хранилища,
+  // и без сети, и экономя трафик. Обычный поток идёт мимо service worker: Safari на iPhone при проходе
+  // через него теряет Range и через пару минут начинает трек заново.
   const stream = /^\/api\/stream\/(\d+)$/.exec(url.pathname);
-  if (stream && !url.searchParams.has("offline") && (offlineIds === null || offlineIds.has(stream[1])))
-    return event.respondWith(audio(request, stream[1]));
+  if (stream && url.searchParams.get("dl") === "1") return event.respondWith(audio(request, stream[1]));
 });

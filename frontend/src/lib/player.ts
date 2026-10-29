@@ -5,6 +5,7 @@
  */
 import { useSyncExternalStore } from "react";
 import { api, coverUrl, streamUrl, type Track } from "./api";
+import { isTrackOffline } from "./offline";
 import {
   ensureGraph,
   getAudioSettings,
@@ -279,7 +280,9 @@ class Player {
     const el = this.decks[deck];
     this.deckIndex[deck] = index;
     this.deckTrackId[deck] = track?.id ?? null;
-    el.src = track ? streamUrl(track.id) : "";
+    // ?dl=1 — трек скачан: service worker отдаст его из хранилища. Остальные потоки он не трогает вовсе:
+    // Safari (iPhone) при проходе через service worker теряет Range и начинает трек заново.
+    el.src = track ? streamUrl(track.id) + (isTrackOffline(track.id) ? "?dl=1" : "") : "";
   }
 
   private stopDeck(deck: number) {
