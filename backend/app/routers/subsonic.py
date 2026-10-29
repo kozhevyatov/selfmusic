@@ -510,13 +510,14 @@ def get_artists(c: Ctx) -> dict:
 
 
 def _artist_albums(c: Ctx, artist_id: int) -> list[Album]:
-    return list(c.db.scalars(album_list_query(c.libs(), c.user.id, "year", artist_id=artist_id)))
+    # открытый исполнитель — как на сайте: без учёта «Вся / Общая / Моя»
+    return list(c.db.scalars(album_list_query(c.plain_libs(), c.user.id, "year", artist_id=artist_id)))
 
 
 @method("getArtist")
 def get_artist(c: Ctx) -> dict:
     _, aid = _parse_id(c.p.req("id"), "ar")
-    rows = artists_with_counts(c.db, c.libs(), only_ids=[aid])
+    rows = artists_with_counts(c.db, c.plain_libs(), only_ids=[aid])
     if not rows:
         raise SubsonicError(70, "Исполнитель не найден")
     data = c.artists(rows)[0]
@@ -542,7 +543,7 @@ def get_music_directory(c: Ctx) -> dict:
     raw = c.p.req("id")
     kind, num = _parse_id(raw, "al")
     if kind == "ar":
-        rows = artists_with_counts(c.db, c.libs(), only_ids=[num])
+        rows = artists_with_counts(c.db, c.plain_libs(), only_ids=[num])
         if not rows:
             raise SubsonicError(70, "Не найдено")
         albums = _artist_albums(c, num)
@@ -666,7 +667,8 @@ def search_legacy(c: Ctx) -> dict:
 
 
 def _starred(c: Ctx) -> dict:
-    libs = c.folder()
+    # избранное не зависит от «Вся / Общая / Моя» (если приложение не выбрало папку явно)
+    libs = c.folder() if c.p.get("musicFolderId") else c.plain_libs()
     tracks = list(
         c.db.scalars(
             tracks_query(libs)
@@ -998,6 +1000,7 @@ def save_play_queue(c: Ctx) -> dict:
     pq.changed_at = datetime.now(timezone.utc)
     pq.device_id = f"subsonic:{pq.changed_by}"[:64]
     pq.playing = False  # клиенты Subsonic не сообщают, играет ли сейчас
+    pq.rev = (pq.rev or 0) + 1
     c.db.merge(pq)
     c.db.commit()
     return {}

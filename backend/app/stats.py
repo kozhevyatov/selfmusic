@@ -117,14 +117,16 @@ def favorite_artists(db: Session, user: User, lib_ids: list[int], limit: int = 1
     return []
 
 
-def years_with_plays(db: Session, user_ids: list[int] | None) -> list[int]:
+def years_with_plays(db: Session, user_ids: list[int] | None, tz_min: int = 0) -> list[int]:
+    """Годы (в часовом поясе пользователя), в которые что-то слушали, — от свежего к старому."""
     q = select(func.min(Play.played_at), func.max(Play.played_at))
     if user_ids is not None:
         q = q.where(Play.user_id.in_(user_ids or [-1]))
     lo, hi = db.execute(q).one()
     if not lo:
         return []
-    return list(range(_aware(hi).year, _aware(lo).year - 1, -1))
+    shift = timedelta(minutes=tz_min)
+    return list(range((_aware(hi) + shift).year, (_aware(lo) + shift).year - 1, -1))
 
 
 def _streak(days: set[date]) -> tuple[int, date | None]:
@@ -323,7 +325,8 @@ def compute(
 
     return {
         "kind": kind,
-        "year": year if kind == "year" else None,
+        # какой год на самом деле показан (без явного — текущий в часовом поясе пользователя)
+        "year": (year or (datetime.now(timezone.utc) + timedelta(minutes=tz_min)).year) if kind == "year" else None,
         "scale": scale,
         "totals": {
             "plays": len(rows),

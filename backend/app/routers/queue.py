@@ -2,6 +2,11 @@
 
 Та же запись, что у Subsonic savePlayQueue/getPlayQueue, поэтому переход
 «приложение на телефоне → браузер» и обратно тоже работает.
+
+Порядок записей — по счётчику rev (время у MariaDB хранится без долей секунды).
+Кто играет «главным» — по started_at: время последнего нажатия «играть» / смены трека.
+Плановая запись (раз в 15 с) или пауза с устройства, которое уже «перебили» более свежим
+стартом на другом устройстве, не принимается: в ответ superseded — и плеер там встаёт на паузу.
 """
 from __future__ import annotations
 
@@ -28,36 +33,37 @@ def _aware(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt and dt.tzinfo is None else dt
 
 
-def _device_name(pq: PlayQueue) -> str:
-    return pq.changed_by or "другое устройство"
-
-
-@router.get("")
-def get_queue(full: bool = False, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    now = datetime.now(timezone.utc)
-    pq = db.get(PlayQueue, user.id)
-    if not pq or not pq.current_id:
-        return {"empty": True, "server_time": now}
+def _state(db: Session, user: User, pq: PlayQueue, full: bool) -> dict:
     ids = [i for i in json.loads(pq.track_ids or "[]") if isinstance(i, int)]
     out = {
         "empty": False,
-        "server_time": now,
+        "server_time": datetime.now(timezone.utc),
+        "rev": pq.rev or 0,
         "changed_at": _aware(pq.changed_at),
+        "started_at": _aware(pq.started_at),
         "device_id": pq.device_id or "",
-        "device_name": _device_name(pq),
+        "device_name": pq.changed_by or "другое устройство",
         "playing": bool(pq.playing),
         "current_id": pq.current_id,
         "position": round((pq.position_ms or 0) / 1000, 2),
         "count": len(ids),
     }
-    current = db.get(Track, pq.current_id)
     libs = set(allowed_library_ids(db, user, kind="any"))
+    current = db.get(Track, pq.current_id) if pq.current_id else None
     if current and current.library_id in libs:
         out["current"] = tracks_out(db, user.id, [current])[0]
     if full:
         rows = {t.id: t for t in db.scalars(select(Track).where(Track.id.in_(ids or [-1]), Track.library_id.in_(libs or [-1])))}
         out["tracks"] = tracks_out(db, user.id, [rows[i] for i in ids if i in rows])
     return out
+
+
+@router.get("")
+def get_queue(full: bool = False, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    pq = db.get(PlayQueue, user.id)
+    if not pq or not pq.current_id:
+        return {"empty": True, "server_time": datetime.now(timezone.utc)}
+    return _state(db, user, pq, full)
 
 
 class QueueIn(BaseModel):
@@ -67,18 +73,35 @@ class QueueIn(BaseModel):
     playing: bool = False
     device_id: str = Field(default="", max_length=64)
     device_name: str = Field(default="", max_length=128)
+    # true — запись из-за нажатия «играть» или смены трека здесь (это устройство становится главным)
+    started: bool = False
+    # started_at последнего старта на этом устройстве (из ответа сервера), если был
+    since: datetime | None = None
 
 
 @router.put("")
 def save_queue(data: QueueIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    pq = db.get(PlayQueue, user.id) or PlayQueue(user_id=user.id)
+    pq = db.get(PlayQueue, user.id, with_for_update=True)
+    if pq and pq.device_id and pq.device_id != data.device_id and pq.playing and not data.started:
+        other = _aware(pq.started_at)
+        mine = _aware(data.since)
+        if other and (mine is None or other > mine):
+            # на другом устройстве нажали «играть» позже — эту запись не принимаем
+            db.rollback()
+            return {"superseded": True, "remote": _state(db, user, pq, False)}
+    if pq is None:
+        pq = PlayQueue(user_id=user.id, rev=0)
+        db.add(pq)
+    now = datetime.now(timezone.utc)
     pq.track_ids = json.dumps(data.track_ids)
     pq.current_id = data.current_id
     pq.position_ms = int(data.position * 1000)
     pq.playing = data.playing
     pq.device_id = data.device_id
     pq.changed_by = data.device_name or "Браузер"
-    pq.changed_at = datetime.now(timezone.utc)
-    db.merge(pq)
+    pq.changed_at = now
+    pq.rev = (pq.rev or 0) + 1
+    if data.started:
+        pq.started_at = now
     db.commit()
-    return {"changed_at": pq.changed_at}
+    return {"superseded": False, "rev": pq.rev, "started_at": _aware(pq.started_at) if data.started else None}

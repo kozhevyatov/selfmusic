@@ -299,11 +299,11 @@ def update_library(
 
 
 def _lib_dir(lib: Library, rel: str) -> tuple[Path, str]:
-    root = Path(lib.path).resolve()
+    # без resolve(): сканер ходит по символическим ссылкам — и здесь подпапка-ссылка должна открываться.
+    # Выход наверх невозможен: norm() убирает «..» и ведущий «/».
+    root = Path(lib.path)
     rel = folders.norm(rel)
-    target = (root / rel).resolve() if rel else root
-    if target != root and root not in target.parents:
-        raise HTTPException(400, "Путь вне папки")
+    target = root / rel if rel else root
     if not target.is_dir():
         raise HTTPException(404, "Подпапка не найдена")
     return target, rel
@@ -373,7 +373,7 @@ class FolderRuleIn(BaseModel):
 
 @router.put("/admin/libraries/{library_id}/folders")
 def set_folder_rule(library_id: int, data: FolderRuleIn, db: Session = Depends(get_db), _: User = Depends(require_admin)) -> dict:
-    lib = db.get(Library, library_id)
+    lib = db.get(Library, library_id, with_for_update=True)  # два быстрых переключения не должны затереть друг друга
     if not lib:
         raise HTTPException(404, "Папка не найдена")
     _, rel = _lib_dir(lib, data.path)

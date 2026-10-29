@@ -106,6 +106,9 @@ class Player {
     };
     this.decks.forEach((d, i) => this.bind(d, i));
     this.bindMediaSession();
+    // закрывают вкладку / сворачивают приложение — точную позицию сохраняем сразу
+    window.addEventListener("pagehide", () => this.writeStorage());
+    document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && this.writeStorage());
     onAudioSettings(() => {
       // включили эквалайзер/выравнивание/кроссфейд — подключаем граф (настройку меняют нажатием, так что можно)
       if (needsGraph() && !hasGraph() && this.current()) ensureGraph(this.decks);
@@ -150,33 +153,40 @@ class Player {
     if (persist) this.persist();
   }
 
+  /** Сохранение в localStorage не чаще раза в секунду: время обновляется 4 раза в секунду,
+   *  и «откладывать до тишины» значило бы не сохранять позицию, пока играет музыка. */
   private persist() {
-    window.clearTimeout(this.saveTimer);
+    if (this.saveTimer) return;
     this.saveTimer = window.setTimeout(() => {
-      const { queue, index, time, volume, shuffle, repeat, order, radio, book, speed } = this.state;
-      try {
-        // Очередь может быть длинной — храним не больше 1000 треков вокруг текущего
-        const start = Math.max(0, index - 200);
-        const slice = queue.slice(start, start + 1000);
-        localStorage.setItem(
-          STORAGE,
-          JSON.stringify({
-            queue: slice,
-            index: index - start,
-            time,
-            volume,
-            shuffle,
-            repeat,
-            radio,
-            book,
-            speed,
-            order: order?.slice(start, start + 1000) ?? null,
-          }),
-        );
-      } catch {
-        /* переполнение или приватный режим */
-      }
-    }, 400);
+      this.saveTimer = 0;
+      this.writeStorage();
+    }, 1000);
+  }
+
+  private writeStorage() {
+    const { queue, index, time, volume, shuffle, repeat, order, radio, book, speed } = this.state;
+    try {
+      // Очередь может быть длинной — храним не больше 1000 треков вокруг текущего
+      const start = Math.max(0, index - 200);
+      const slice = queue.slice(start, start + 1000);
+      localStorage.setItem(
+        STORAGE,
+        JSON.stringify({
+          queue: slice,
+          index: index - start,
+          time,
+          volume,
+          shuffle,
+          repeat,
+          radio,
+          book,
+          speed,
+          order: order?.slice(start, start + 1000) ?? null,
+        }),
+      );
+    } catch {
+      /* переполнение или приватный режим */
+    }
   }
 
   current(): Track | null {

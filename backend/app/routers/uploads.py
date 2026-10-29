@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from .. import folders
 from ..access import (
     allowed_library_ids,
     can_edit_track,
@@ -217,6 +218,10 @@ def _store_upload(
     if target_dir != root and root not in target_dir.parents:
         tmp.unlink(missing_ok=True)
         raise HTTPException(400, "Недопустимый путь")
+    if dest_dir and not folders.included(folders.parse(lib.folder_rules), dest_dir):
+        # файл лёг бы в исключённую папку: в медиатеке его не будет, а квоту займёт
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(409, f"Папка «{dest_dir}» исключена из медиатеки — загрузка туда недоступна")
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
         if not is_audio and (target_dir / _safe_part(original)).exists():

@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .access import allowed_library_ids
@@ -361,6 +361,13 @@ def _today() -> str:
     return local_now().strftime("%Y-%m-%d")
 
 
+def forget_user(db: Session, user: User) -> None:
+    """Сменился состав медиатеки пользователя («Вся / Общая / Моя») — подборки на сегодня собрать заново."""
+    for key in [k for k in _pool_cache if isinstance(k, tuple) and k[0] == user.id]:
+        _pool_cache.pop(key, None)
+    db.execute(delete(UserMix).where(UserMix.user_id == user.id))
+
+
 def get_mix(db: Session, user: User, key: str, pool_cache: dict | None = None, refresh: bool = False) -> list[int]:
     """Треки подборки на сегодня (из кэша или собранные заново)."""
     row = db.get(UserMix, (user.id, key))
@@ -408,7 +415,7 @@ def subsonic_keys() -> list[str]:
 
 # ---------------- «Радио»: похожие треки ----------------
 
-_pool_cache: dict[int, tuple[float, dict[int, Cand]]] = {}
+_pool_cache: dict[tuple[int, str], tuple[float, dict[int, Cand]]] = {}
 
 
 def cached_pool(db: Session, user: User, ttl: float = 600) -> dict[int, Cand]:
@@ -416,11 +423,12 @@ def cached_pool(db: Session, user: User, ttl: float = 600) -> dict[int, Cand]:
     import time  # noqa: PLC0415
 
     now = time.monotonic()
-    hit = _pool_cache.get(user.id)
+    key = (user.id, getattr(user, "library_scope", "all"))
+    hit = _pool_cache.get(key)
     if hit and now - hit[0] < ttl:
         return hit[1]
     pool = load_pool(db, user)
-    _pool_cache[user.id] = (now, pool)
+    _pool_cache[key] = (now, pool)
     if len(_pool_cache) > 50:
         _pool_cache.pop(next(iter(_pool_cache)))
     return pool

@@ -35,5 +35,5 @@ def get_stats(
         libs = allowed_library_ids(db, user)
         user_ids = [user.id]
     data = compute(db, libs, user_ids, user, period, year, tz)
-    data["years"] = years_with_plays(db, user_ids)
+    data["years"] = years_with_plays(db, user_ids, tz)
     return data

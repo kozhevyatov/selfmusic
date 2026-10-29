@@ -27,8 +27,9 @@ def _aware(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt and dt.tzinfo is None else dt
 
 
-def book_libs(db: Session, user: User) -> list[int]:
-    return allowed_library_ids(db, user, kind="audiobooks")
+def book_libs(db: Session, user: User, scoped: bool = True) -> list[int]:
+    """scoped — с учётом «Вся / Общая / Моя» (только для списков; книгу, прогресс, закладки — всегда)."""
+    return allowed_library_ids(db, user, kind="audiobooks", scoped=scoped)
 
 
 def _progress_out(p: BookProgress | None) -> dict | None:
@@ -63,8 +64,8 @@ def _card(a: Album, b: Book | None, p: BookProgress | None) -> dict:
     }
 
 
-def _query(db: Session, user: User):  # noqa: ANN202
-    libs = book_libs(db, user)
+def _query(db: Session, user: User, scoped: bool = True):  # noqa: ANN202
+    libs = book_libs(db, user, scoped)
     return (
         select(Album, Book, BookProgress)
         .outerjoin(Book, Book.album_id == Album.id)
@@ -116,8 +117,12 @@ def list_books(
 @router.get("/books/home")
 def books_home(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     base = _query(db, user)
+    # «Продолжить» — начатые книги из всех папок, независимо от фильтра
     cont = db.execute(
-        base.where(BookProgress.album_id.is_not(None), BookProgress.finished.is_(False)).order_by(desc(BookProgress.updated_at)).limit(12)
+        _query(db, user, scoped=False)
+        .where(BookProgress.album_id.is_not(None), BookProgress.finished.is_(False))
+        .order_by(desc(BookProgress.updated_at))
+        .limit(12)
     ).all()
     recent = db.execute(base.order_by(desc(Album.created_at)).limit(18)).all()
     libs = book_libs(db, user)
@@ -152,7 +157,7 @@ def books_home(db: Session = Depends(get_db), user: User = Depends(get_current_u
 
 def _visible_book(db: Session, user: User, book_id: int) -> tuple[Album, Book | None]:
     album = db.get(Album, book_id)
-    if not album or album.library_id not in book_libs(db, user):
+    if not album or album.library_id not in book_libs(db, user, scoped=False):
         raise HTTPException(404, "Книга не найдена")
     return album, db.get(Book, book_id)
 

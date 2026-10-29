@@ -464,6 +464,12 @@ function WrappedHero({ data, onOpen }: { data: StatsResult; onOpen: () => void }
   );
 }
 
+const currentYear = () => new Date().getFullYear();
+/** Годы для выбора: текущий (даже если в нём ещё ничего не слушали) и все, где есть история. */
+function yearChips(d: StatsResult): number[] {
+  return [...new Set([currentYear(), ...d.years, ...(d.year ? [d.year] : [])])].sort((a, b) => b - a);
+}
+
 const PERIODS: { value: StatsPeriod; label: string }[] = [
   { value: "week", label: "Неделя" },
   { value: "month", label: "Месяц" },
@@ -501,14 +507,14 @@ export default function StatsPage() {
             options={PERIODS}
           />
         </div>
-        {period === "year" && d && d.years.length > 1 && (
-          <div className="flex gap-1.5">
-            {d.years.map((y) => {
-              const active = (year ?? d.years[0]) === y;
+        {period === "year" && d && yearChips(d).length > 1 && (
+          <div className="flex flex-wrap gap-1.5">
+            {yearChips(d).map((y) => {
+              const active = d.year === y;
               return (
                 <button
                   key={y}
-                  onClick={() => setSearchParam("year", y === d.years[0] ? null : String(y))}
+                  onClick={() => setSearchParam("year", y === currentYear() ? null : String(y))}
                   className={cn(
                     "num h-9 rounded-full border px-3.5 text-[13px] font-bold transition",
                     active ? "border-transparent bg-accent text-accent-fg" : "text-muted hover:text-fg",

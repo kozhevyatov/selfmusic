@@ -7,6 +7,7 @@ import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 const LABELS: Record<LibraryScope, string> = { all: "Вся музыка", shared: "Только общая", mine: "Только моя" };
+const SHORT: Record<LibraryScope, string> = { all: "Вся", shared: "Общая", mine: "Моя" };
 const HINTS: Record<LibraryScope, string> = {
   all: "Общие папки и личная",
   shared: "Без загруженного лично",
@@ -30,8 +31,9 @@ export function booksAvailable(libs: MyLibrary[] | undefined) {
 export function LibraryScopeSwitch({ compact = false }: { compact?: boolean }) {
   const { user } = useAuth();
   const libs = useQuery(["libraries"], api.library.libraries, { staleTime: 300_000 });
-  if (!user || !scopeAvailable(libs.data)) return null;
-  const scope = user.library_scope ?? "all";
+  const scope = user?.library_scope ?? "all";
+  // выбранный фильтр показываем всегда — иначе из него нельзя было бы выйти
+  if (!user || (!scopeAvailable(libs.data) && scope === "all")) return null;
   const set = async (s: LibraryScope) => {
     if (s === scope) return;
     try {
@@ -63,7 +65,7 @@ export function LibraryScopeSwitch({ compact = false }: { compact?: boolean }) {
           )}
         >
           <Library className="size-4 shrink-0" />
-          <span className={cn("truncate", !compact && "flex-1 text-left")}>{compact && !filtered ? "Вся" : LABELS[scope]}</span>
+          <span className={cn("truncate", !compact && "flex-1 text-left")}>{compact ? SHORT[scope] : LABELS[scope]}</span>
           <ChevronDown className="size-3.5 shrink-0" />
         </button>
       )}

@@ -533,7 +533,7 @@ function UserDetail({ user, libs, me }: { user: AdminUser; libs: AdminLibrary[];
     }
   };
   const shared = libs.filter((l) => !l.owner || l.owner.id !== user.id);
-  const personal = libs.find((l) => l.owner?.id === user.id);
+  const personal = libs.find((l) => l.owner?.id === user.id && l.kind === "music");
   const openCount = user.is_admin ? libs.filter((l) => !l.owner).length : shared.filter((l) => access.has(l.id)).length;
 
   return (

@@ -53,8 +53,11 @@ def update_profile(data: ProfileUpdate, db: Session = Depends(get_db), user: Use
             user.email = email
     if data.stream_quality is not None:
         user.stream_quality = data.stream_quality
-    if data.library_scope is not None:
+    if data.library_scope is not None and data.library_scope != user.library_scope:
         user.library_scope = data.library_scope
+        from ..mixes import forget_user  # noqa: PLC0415
+
+        forget_user(db, user)
     db.commit()
     db.refresh(user)
     return user
@@ -129,8 +132,17 @@ def save_avatar(db: Session, user: User, file: UploadFile) -> User:
         raise HTTPException(413, "Картинка больше 15 МБ")
     try:
         img = Image.open(io.BytesIO(data))
+        if img.width * img.height > 50_000_000:
+            raise ValueError("слишком большая")  # распаковка такой картинки съест сотни МБ памяти
+        img.draft("RGB", (AVATAR_SIZE * 2, AVATAR_SIZE * 2))  # JPEG: декодируем сразу в уменьшенном размере
         img = ImageOps.exif_transpose(img).convert("RGB")
         img = ImageOps.fit(img, (AVATAR_SIZE, AVATAR_SIZE), Image.LANCZOS)
+    except Image.DecompressionBombError:
+        raise HTTPException(413, "Картинка слишком большая — больше 50 мегапикселей")
+    except ValueError as exc:
+        if "слишком" in str(exc):
+            raise HTTPException(413, "Картинка слишком большая — больше 50 мегапикселей")
+        raise HTTPException(415, "Это не картинка")
     except Exception:  # noqa: BLE001
         raise HTTPException(415, "Это не картинка")
     AVATAR_DIR.mkdir(parents=True, exist_ok=True)

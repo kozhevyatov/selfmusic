@@ -113,7 +113,9 @@ export type RemoteQueue =
   | {
       empty: false;
       server_time: string;
+      rev: number;
       changed_at: string;
+      started_at: string | null;
       device_id: string;
       device_name: string;
       playing: boolean;
@@ -753,9 +755,23 @@ export const api = {
     home: () => request<Home>("/api/home"),
     remoteQueue: (full = false) => request<RemoteQueue>(`/api/queue${qs({ full: full || undefined })}`),
     saveQueue: (
-      data: { track_ids: number[]; current_id: number | null; position: number; playing: boolean; device_id: string; device_name: string },
+      data: {
+        track_ids: number[];
+        current_id: number | null;
+        position: number;
+        playing: boolean;
+        device_id: string;
+        device_name: string;
+        started: boolean;
+        since: string | null;
+      },
       keepalive = false,
-    ) => request<{ changed_at: string }>("/api/queue", { method: "PUT", body: json(data), keepalive }),
+    ) =>
+      request<{ superseded: boolean; rev?: number; started_at?: string | null; remote?: RemoteQueue }>("/api/queue", {
+        method: "PUT",
+        body: json(data),
+        keepalive,
+      }),
     stats: (p: { period: StatsPeriod; year?: number | null; scope?: "me" | "server" }) =>
       request<StatsResult>(`/api/stats${qs({ period: p.period, year: p.year ?? undefined, scope: p.scope ?? "me", tz: -new Date().getTimezoneOffset() })}`),
     libraries: () => request<MyLibrary[]>("/api/libraries"),

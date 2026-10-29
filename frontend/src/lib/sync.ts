@@ -89,8 +89,13 @@ export function acceptOffer() {
 // ---------- запись ----------
 
 let ready = false; // пока не сверились с сервером, ничего не пишем (иначе затрём свежее старым)
-let lastHandled = 0; // changed_at (мс) последней записи, которую мы уже видели или сделали сами
+let lastRev = 0; // версия записи на сервере, которую мы уже видели или сделали сами
+let myStartedAt: string | null = null; // когда здесь последний раз нажали «играть» (время сервера)
+let dirty = false; // здесь что-то изменили сами и ещё не записали
+let startPending = false; // ближайшая запись — из-за нажатия «играть» / смены трека
 let lastSig = "";
+let lastPlaying = false;
+let lastTrack = 0;
 let lastPushAt = 0;
 let lastTime = 0;
 let lastTick = Date.now();
@@ -118,6 +123,8 @@ function snapshot() {
     playing: s.playing,
     device_id: deviceId,
     device_name: deviceName(),
+    started: startPending && s.playing,
+    since: myStartedAt,
   };
 }
 
@@ -127,9 +134,21 @@ async function push(keepalive = false) {
   const data = snapshot();
   if (!data) return;
   lastPushAt = Date.now();
+  if (data.started) startPending = false;
   try {
     const r = await api.library.saveQueue(data, keepalive);
-    lastHandled = Math.max(lastHandled, Date.parse(r.changed_at));
+    if (r.superseded) {
+      // пока мы играли, на другом устройстве нажали «играть» — уступаем
+      dirty = false;
+      if (r.remote && !r.remote.empty) {
+        lastRev = Math.max(lastRev, r.remote.rev);
+        await giveWay(r.remote);
+      }
+      return;
+    }
+    dirty = false;
+    lastRev = Math.max(lastRev, r.rev ?? 0);
+    if (r.started_at) myStartedAt = r.started_at;
   } catch {
     /* офлайн или сеть — запишем в следующий раз */
   }
@@ -147,15 +166,20 @@ function onPlayerChange() {
   const now = Date.now();
   // перемотка: время ушло не туда, куда должно было за прошедшее время
   const expected = lastTime + (s.playing ? (now - lastTick) / 1000 : 0);
-  const seeked = Math.abs(s.time - expected) > 4 && cur?.id === Number(lastSig.split("|")[0]);
+  const seeked = Math.abs(s.time - expected) > 4 && (cur?.id ?? 0) === lastTrack;
+  const startedNow = s.playing && (!lastPlaying || (cur?.id ?? 0) !== lastTrack);
   lastTime = s.time;
   lastTick = now;
+  lastPlaying = s.playing;
+  lastTrack = cur?.id ?? 0;
   if (suppressPush) {
     lastSig = sig;
     return;
   }
+  if (startedNow) startPending = true;
   if (sig !== lastSig || seeked) {
     lastSig = sig;
+    dirty = true;
     schedulePush();
   } else if (s.playing && now - lastPushAt > PUSH_EVERY) {
     schedulePush(0);
@@ -174,13 +198,9 @@ async function pull() {
   try {
     const r = await api.library.remoteQueue();
     if (r.empty) return;
-    const changed = Date.parse(r.changed_at);
-    if (r.device_id === deviceId) {
-      lastHandled = Math.max(lastHandled, changed);
-      return;
-    }
-    if (changed <= lastHandled) return;
-    lastHandled = changed;
+    if (r.rev <= lastRev) return;
+    lastRev = r.rev;
+    if (r.device_id === deviceId) return;
     await handleRemote(r);
   } catch {
     /* нет сети — не страшно */
@@ -190,26 +210,38 @@ async function pull() {
   }
 }
 
+function remotePosition(r: Remote) {
+  const elapsed = r.playing ? Math.max(0, (Date.parse(r.server_time) - Date.parse(r.changed_at)) / 1000) : 0;
+  return r.position + elapsed;
+}
+
+/** Музыку включили на другом устройстве: здесь — пауза и предложение «Слушать здесь». */
+async function giveWay(r: Remote) {
+  quiet();
+  player.pause();
+  const position = remotePosition(r);
+  const full = await api.library.remoteQueue(true).catch(() => null);
+  const tracks = full && !full.empty ? (full.tracks ?? []) : [];
+  const index = tracks.findIndex((t) => t.id === r.current_id);
+  if (index >= 0) setOffer({ device: r.device_name, track: tracks[index], tracks, index, position, at: Date.now() });
+  toast.info(`Музыка продолжилась на устройстве «${r.device_name}»`);
+}
+
 async function handleRemote(r: Remote) {
   const s = player.getState();
   if (s.book) return; // слушаем книгу — у книг своя синхронизация прогресса
-  const elapsed = r.playing ? Math.max(0, (Date.parse(r.server_time) - Date.parse(r.changed_at)) / 1000) : 0;
-  const position = r.position + elapsed;
+  const position = remotePosition(r);
   const cur = s.queue[s.index];
 
   if (s.playing) {
-    if (!r.playing) return; // там поставили на паузу — здесь продолжаем
-    // музыку включили на другом устройстве: здесь — пауза, чтобы не играло два сразу
-    quiet();
-    player.pause();
-    const full = await api.library.remoteQueue(true).catch(() => null);
-    const tracks = full && !full.empty ? (full.tracks ?? []) : [];
-    const index = tracks.findIndex((t) => t.id === r.current_id);
-    if (index >= 0) setOffer({ device: r.device_name, track: tracks[index], tracks, index, position, at: Date.now() });
-    toast.info(`Музыка продолжилась на устройстве «${r.device_name}»`);
+    // уступаем, только если «играть» там нажали позже, чем здесь
+    const theirs = r.playing && r.started_at ? Date.parse(r.started_at) : 0;
+    const mine = myStartedAt ? Date.parse(myStartedAt) : 0;
+    if (theirs && theirs > mine) await giveWay(r);
     return;
   }
 
+  if (dirty) return; // здесь есть свои несохранённые изменения — запишем их, а не затрём
   // здесь тихо: подхватываем, если отличается
   if (cur && cur.id === r.current_id && Math.abs(s.time - position) < 3) return;
   const full = await api.library.remoteQueue(true).catch(() => null);
@@ -236,18 +268,20 @@ export function startSync(): () => void {
   const cur = s.queue[s.index];
   lastSig = `${cur?.id ?? 0}|${s.playing}|${s.queue.length}|${s.queue[0]?.id ?? 0}|${s.book ? 1 : 0}`;
   lastTime = s.time;
+  lastPlaying = s.playing;
+  lastTrack = cur?.id ?? 0;
   const unsub = player.subscribe(onPlayerChange);
   void pull();
 
   const onVisible = () => {
     if (document.visibilityState === "visible") {
       if (Date.now() - lastPull > 4000) void pull();
-    } else if (player.getState().playing || Date.now() - lastPushAt > 2000) {
+    } else if (player.getState().playing || dirty) {
       void push(true); // уходим со вкладки/закрываем — сохранить точную позицию
     }
   };
   const onFocus = () => Date.now() - lastPull > 4000 && void pull();
-  const onHide = () => void push(true);
+  const onHide = () => (player.getState().playing || dirty) && void push(true);
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("focus", onFocus);
   window.addEventListener("pagehide", onHide);

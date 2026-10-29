@@ -29,7 +29,7 @@ def allowed_library_ids(
     cond = or_(Library.owner_id == user.id, Library.id.in_(access))
     if user.is_admin:
         cond = or_(cond, Library.owner_id.is_(None))
-    query = select(Library.id, Library.owner_id).where(Library.enabled.is_(True), cond)
+    query = select(Library.id, Library.owner_id, Library.track_count).where(Library.enabled.is_(True), cond)
     if kind != "any":
         query = query.where(Library.kind == kind)
     rows = list(db.execute(query))
@@ -38,8 +38,9 @@ def allowed_library_ids(
         return [i for i in ids if i == only]
     scope = getattr(user, "library_scope", "all") or "all"
     if scoped and kind != "any" and scope != "all":
-        mine = [i for i, owner in rows if owner == user.id]
-        shared = [i for i, owner in rows if owner != user.id]
+        # пустая личная папка (её создаём заранее для загрузок) не считается — иначе «Моя» показала бы пустоту
+        mine = [i for i, owner, count in rows if owner == user.id and count]
+        shared = [i for i, owner, _ in rows if owner != user.id]
         # фильтруем, только когда есть из чего выбирать — иначе раздел просто опустел бы
         if mine and shared:
             return mine if scope == "mine" else shared

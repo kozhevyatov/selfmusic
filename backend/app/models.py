@@ -293,6 +293,9 @@ class PlayQueue(Base):
     # синхронизация между устройствами: кто записал и играет ли там сейчас
     device_id: Mapped[str] = mapped_column(String(64), default="")
     playing: Mapped[bool] = mapped_column(Boolean, default=False)
+    # порядок записей — счётчиком (у MariaDB DATETIME без долей секунды); когда там нажали «играть»
+    rev: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Share(Base):

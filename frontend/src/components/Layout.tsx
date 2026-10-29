@@ -289,7 +289,7 @@ export function Layout({ children }: { children: ReactNode }) {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (el.closest("input, textarea, select, [contenteditable=true], button, a, [role=button]")) return;
-      if (e.code === "Space") {
+      if (e.code === "Space" && !e.defaultPrevented) {
         e.preventDefault();
         player.toggle();
       }

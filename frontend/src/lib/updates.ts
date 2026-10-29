@@ -38,7 +38,7 @@ export function applyUpdate() {
 }
 
 let lastCheck = 0;
-async function check() {
+async function check(fromReturn = false) {
   const mine = currentBuild();
   if (!mine || isOffline() || available) return; // в режиме разработки скрипта /assets/ нет
   lastCheck = Date.now();
@@ -48,9 +48,9 @@ async function check() {
     if (!m) return;
     const fresh = new URL(m[1], location.href).pathname;
     if (fresh === mine) return;
-    const s = player.getState();
-    // ничего не играет и пользователь только вернулся — тихо перезагружаемся
-    if (!s.playing && document.visibilityState === "visible") location.reload();
+    // тихо перезагружаемся, только когда пользователь вернулся в приложение и ничего не играет;
+    // проверка по таймеру лишь показывает «Обновить» (вдруг он сейчас что-то заполняет)
+    if (fromReturn && !player.getState().playing) location.reload();
     else setAvailable(true);
   } catch {
     /* сеть — проверим позже */
@@ -58,20 +58,24 @@ async function check() {
 }
 
 export function startUpdateChecks(): () => void {
+  let hiddenAt = 0;
   const onVisible = () => {
-    if (document.visibilityState === "visible" && Date.now() - lastCheck > 30_000) void check();
+    if (document.visibilityState === "hidden") {
+      hiddenAt = Date.now();
+      return;
+    }
+    // «вернулся в приложение» — только если его сворачивали надолго (а не закрыли окно выбора файла)
+    const returned = hiddenAt > 0 && Date.now() - hiddenAt > 60_000;
+    hiddenAt = 0;
+    if (Date.now() - lastCheck > 30_000) void check(returned);
   };
+  const onFocus = () => Date.now() - lastCheck > 30_000 && void check(false);
   document.addEventListener("visibilitychange", onVisible);
-  window.addEventListener("focus", onVisible);
+  window.addEventListener("focus", onFocus);
   const timer = window.setInterval(() => void check(), CHECK_EVERY);
-  // когда музыка встала на паузу, а обновление ждёт — можно применить
-  const unsub = player.subscribe(() => {
-    if (available && !player.getState().playing && document.visibilityState === "hidden") location.reload();
-  });
   return () => {
     document.removeEventListener("visibilitychange", onVisible);
-    window.removeEventListener("focus", onVisible);
+    window.removeEventListener("focus", onFocus);
     window.clearInterval(timer);
-    unsub();
   };
 }
