@@ -158,10 +158,11 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
 
 
 def get_media_user(request: Request, db: Session = Depends(get_db)) -> User:
-    """Для потоков и обложек: Bearer-токен (приложение) или media-cookie (браузер)."""
+    """Для потоков и обложек: Bearer-токен, media-cookie (браузер) или media-токен в ссылке ?mt=…
+    (нативный плеер Android-приложения: системный плеер и экран блокировки не передают cookie)."""
     if _bearer(request):
         return get_current_user(request, db)
-    token = request.cookies.get(MEDIA_COOKIE)
+    token = request.cookies.get(MEDIA_COOKIE) or request.query_params.get("mt") or request.headers.get("X-Media-Token")
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется авторизация")
     payload = decode_token(token, "media")

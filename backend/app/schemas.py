@@ -96,6 +96,8 @@ class TokenOut(BaseModel):
     access_token: str
     # Для мобильного приложения; в вебе refresh живёт в httpOnly-cookie.
     refresh_token: str
+    # Для нативного плеера приложения: долгий токен только для потока и обложек (?mt=…)
+    media_token: str | None = None
     token_type: str = "bearer"
     user: UserOut
 

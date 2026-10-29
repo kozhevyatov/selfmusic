@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { sendNative } from "./native";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type Accent = "coral" | "violet" | "lime" | "teal";
@@ -35,6 +36,8 @@ function apply() {
   root.dataset.accent = state.accent;
   root.dataset.motion = state.motion;
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0d0d0f" : "#f6f4f0");
+  // Android-приложению: цвет полос под статус-баром и навигацией
+  sendNative("theme", { dark, background: dark ? "#0d0d0f" : "#f6f4f0" });
 }
 
 media.addEventListener("change", () => state.mode === "system" && apply());

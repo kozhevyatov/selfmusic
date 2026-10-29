@@ -9,3 +9,5 @@ data
 uploads
 .env
 *.md
+media
+mobile

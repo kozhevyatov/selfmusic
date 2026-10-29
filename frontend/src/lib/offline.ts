@@ -7,6 +7,7 @@
  *   /__offline/index.json   — что скачано: подборки и данные треков
  *   /api/cover/...          — обложки нужных размеров (по тем же адресам, что запрашивает интерфейс)
  */
+import { isNative } from "./native";
 import { useSyncExternalStore } from "react";
 import { coverUrl, type Track } from "./api";
 
@@ -62,7 +63,8 @@ export function useOfflineState(): State {
   );
 }
 
-export const offlineSupported = supported;
+// В Android-приложении звук играет нативный плеер — кэш браузера ему недоступен (скачивание — позже, нативное)
+export const offlineSupported = supported && !isNative;
 
 // ---------------- индекс ----------------
 

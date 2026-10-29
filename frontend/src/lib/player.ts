@@ -15,6 +15,8 @@ import {
   resumeGraph,
   setDeckGain,
 } from "./audio";
+import { isNative, onNative, sendNative, type NativeEvent } from "./native";
+import { InertDeck, NativeDeck, NativeEngine } from "./nativePlayer";
 import { shuffled } from "./utils";
 
 export type Repeat = "off" | "all" | "one";
@@ -66,7 +68,12 @@ function makeDeck() {
 }
 
 class Player {
-  private decks: HTMLAudioElement[] = [makeDeck(), makeDeck()];
+  /** Внутри Android-приложения звук играет нативный плеер (см. nativePlayer.ts) */
+  private native = isNative;
+  private engine = new NativeEngine();
+  private decks: HTMLAudioElement[] = isNative
+    ? [new NativeDeck() as unknown as HTMLAudioElement, new InertDeck() as unknown as HTMLAudioElement]
+    : [makeDeck(), makeDeck()];
   private active = 0;
   /** Какой трек (позиция очереди) загружен на деке */
   private deckIndex: (number | null)[] = [null, null];
@@ -105,11 +112,19 @@ class Player {
       sleep: null,
     };
     this.decks.forEach((d, i) => this.bind(d, i));
-    this.bindMediaSession();
+    if (this.native) {
+      onNative((e) => this.onNativeEvent(e));
+      sendNative("hello"); // если в приложении уже что-то играет — оно пришлёт свою очередь
+    } else this.bindMediaSession();
     // закрывают вкладку / сворачивают приложение — точную позицию сохраняем сразу
     window.addEventListener("pagehide", () => this.writeStorage());
     document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && this.writeStorage());
     onAudioSettings(() => {
+      if (this.native) {
+        // выравнивание громкости — множитель у каждого трека в нативной очереди
+        this.engine.update(this.state.queue, this.state.index, this.state.book?.id ?? null, true);
+        return;
+      }
       // включили эквалайзер/выравнивание/кроссфейд — подключаем граф (настройку меняют нажатием, так что можно)
       if (needsGraph() && !hasGraph() && this.current()) ensureGraph(this.decks);
       this.applyVolume(0);
@@ -148,7 +163,13 @@ class Player {
   };
 
   private set(patch: Partial<PlayerState>, persist = true) {
+    const prev = this.state;
     this.state = { ...this.state, ...patch };
+    if (this.native) {
+      if (patch.repeat !== undefined && patch.repeat !== prev.repeat) sendNative("repeat", { mode: patch.repeat });
+      // очередь поменялась (добавили, убрали, переставили, радио дописало) — сообщим приложению
+      if (patch.queue !== undefined && patch.queue !== prev.queue) queueMicrotask(() => this.engine.update(this.state.queue, this.state.index, this.state.book?.id ?? null));
+    }
     this.listeners.forEach((l) => l());
     if (persist) this.persist();
   }
@@ -197,6 +218,7 @@ class Player {
 
   /** Подключить граф (если нужен) — вызывается из действий пользователя */
   private engage() {
+    if (this.native) return; // эквалайзер и кроссфейд — только в браузере
     if (needsGraph() && !hasGraph()) {
       ensureGraph(this.decks);
       this.applyVolume(0);
@@ -206,6 +228,11 @@ class Player {
   }
 
   private applyVolume(deck: number) {
+    if (this.native) {
+      // выравнивание громкости приложение применяет само (множитель у трека); здесь — общая громкость
+      if (deck === 0) sendNative("volume", { volume: this.state.muted ? 0 : this.state.volume });
+      return;
+    }
     const el = this.decks[deck];
     const idx = this.deckIndex[deck];
     const track = idx !== null ? this.state.queue[idx] : null;
@@ -335,6 +362,59 @@ class Player {
     }
   }
 
+  // ---------- Android-приложение ----------
+
+  private onNativeEvent(e: NativeEvent) {
+    const deck = this.decks[0] as unknown as NativeDeck;
+    switch (e.type) {
+      case "status": {
+        // нативный плеер сам перешёл к другому треку (конец трека, кнопка в наушниках, экран блокировки)
+        if (e.index !== this.state.index && this.state.queue[e.index]?.id === e.id) this.onNativeTrack(e.index, e.duration);
+        deck.apply(e);
+        break;
+      }
+      case "track":
+        if (e.index !== this.state.index && this.state.queue[e.index]?.id === e.id) this.onNativeTrack(e.index, e.duration);
+        break;
+      case "ended":
+        this.wantPlay = false;
+        this.set({ playing: false });
+        break;
+      case "sleep-done":
+        this.set({ sleep: null });
+        break;
+      case "error":
+        window.dispatchEvent(new CustomEvent("sm:player-error", { detail: this.state.queue.find((t) => t.id === e.id)?.title }));
+        break;
+      case "session": {
+        // страницу перезапустили (обновление сайта), а музыка в приложении продолжала играть
+        const tracks = e.tracks as Track[];
+        if (!tracks.length) break;
+        this.engine.adopt(tracks);
+        this.deckIndex[0] = e.index;
+        this.deckTrackId[0] = tracks[e.index]?.id ?? null;
+        deck.newTrack(e.duration);
+        this.set({ queue: tracks, index: e.index, time: e.time, duration: e.duration || tracks[e.index]?.duration || 0, order: null });
+        deck.apply({ index: e.index, id: tracks[e.index]?.id ?? null, time: e.time, duration: e.duration, playing: e.playing, buffering: false });
+        this.wantPlay = e.playing;
+        if (e.playing) this.startTracking();
+        this.updateMediaSession();
+        break;
+      }
+    }
+  }
+
+  private onNativeTrack(index: number, duration: number) {
+    const track = this.state.queue[index];
+    this.deckIndex[0] = index;
+    this.deckTrackId[0] = track?.id ?? null;
+    (this.decks[0] as unknown as NativeDeck).newTrack(duration || track?.duration || 0);
+    this.set({ index, time: 0, duration: duration || track?.duration || 0 });
+    this.startTracking();
+    this.updateMediaSession();
+    this.maybeExtendRadio();
+  }
+
   // ---------- переходы между треками ----------
 
   private nextIndex(): number | null {
@@ -358,6 +438,7 @@ class Player {
 
   /** Следим за концом трека: заранее грузим следующий, запускаем кроссфейд или переход без паузы */
   private watchEnd(a: HTMLAudioElement) {
+    if (this.native) return; // следующий трек включает нативный плеер
     if (this.transition || a.paused || !isFinite(a.duration) || a.duration < 5) return;
     const ni = this.nextIndex();
     if (ni === null) return;
@@ -427,6 +508,7 @@ class Player {
   }
 
   private maybeScrobble() {
+    if (this.native) return; // прослушивания засчитывает приложение (и в фоне тоже)
     const cur = this.current();
     if (!cur || this.state.book) return;
     const key = `${this.playStartedFor}`;
@@ -462,9 +544,21 @@ class Player {
     this.playStartedFor = `${this.current()?.id}:${Date.now()}`;
   }
 
-  private load(index: number, autoplay: boolean) {
+  private load(index: number, autoplay: boolean, position = 0) {
     const track = this.state.queue[index];
     if (!track) return;
+    if (this.native) {
+      this.deckIndex[0] = index;
+      this.deckTrackId[0] = track.id;
+      (this.decks[0] as unknown as NativeDeck).newTrack(0);
+      this.engine.goto(this.state.queue, index, autoplay, position, this.state.book?.id ?? null);
+      this.set({ index, time: position, duration: track.duration, loading: autoplay });
+      this.startTracking();
+      this.updateMediaSession();
+      this.wantPlay = autoplay;
+      this.maybeExtendRadio();
+      return;
+    }
     this.cancelTransition();
     const sb = 1 - this.active;
     if (this.deckIndex[sb] === index && this.deckTrackId[sb] === track.id) {
@@ -495,6 +589,10 @@ class Player {
 
   private updateMediaSession() {
     const t = this.current();
+    if (t && this.native) {
+      document.title = `${t.title} · ${t.artist}`; // экран блокировки — у приложения
+      return;
+    }
     if (!t || !("mediaSession" in navigator)) return;
     const art = coverUrl(t.cover, 512);
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -531,8 +629,9 @@ class Player {
     this.stopDeck(1 - this.active);
     this.set({ queue: tracks, order: null, shuffle: false, radio: null, book, speed: opts.speed ?? 1, repeat: "off" });
     this.deckIndex[this.active] = null;
-    this.load(index, true);
     const at = opts.position ?? 0;
+    if (this.native) return this.load(index, true, at > 1 ? Math.max(0, at - 2) : 0);
+    this.load(index, true);
     if (at > 1) this.audio.addEventListener("loadedmetadata", () => this.seek(Math.max(0, at - 2)), { once: true });
   }
 
@@ -634,6 +733,10 @@ class Player {
 
   /** minutes — через сколько остановить; "chapter" — в конце главы/трека; null — выключить */
   setSleep(value: number | "chapter" | null) {
+    if (this.native) {
+      // в фоне страница «спит» — таймер ведёт приложение
+      sendNative("sleep", value === null ? { until: null, endOfTrack: false } : value === "chapter" ? { until: null, endOfTrack: true } : { until: Date.now() + value * 60_000, endOfTrack: false });
+    }
     if (value === null) return this.set({ sleep: null });
     if (value === "chapter") return this.set({ sleep: { until: null, endOfChapter: true } });
     this.set({ sleep: { until: Date.now() + value * 60_000, endOfChapter: false } });
@@ -643,7 +746,7 @@ class Player {
 
   private checkSleep() {
     const { sleep } = this.state;
-    if (!sleep) return;
+    if (!sleep || this.native) return;
     const a = this.audio;
     if (sleep.until) {
       const left = (sleep.until - Date.now()) / 1000;
@@ -757,6 +860,11 @@ class Player {
     this.syncBook(true);
     this.set({ queue: tracks, order: null, shuffle: false, radio: null, book: null, speed: 1 });
     this.deckIndex[this.active] = null;
+    if (this.native) {
+      this.load(index, autoplay, time > 1 ? time : 0);
+      if (time > 1) this.set({ time });
+      return;
+    }
     this.load(index, autoplay);
     if (time > 1) {
       const a = this.audio;
@@ -796,6 +904,12 @@ class Player {
 
   resume() {
     if (!this.current()) return;
+    if (this.native && !this.engine.loaded) {
+      // очередь восстановлена из памяти страницы, а в нативный плеер ещё не отправлена
+      this.wantPlay = true;
+      this.load(this.state.index, true, this.state.time > 1 ? this.state.time : 0);
+      return;
+    }
     this.engage();
     if (!this.audio.src || this.audio.error) {
       // Источник не загрузился (например, очередь восстановлена до входа) — грузим заново с того же места
@@ -932,6 +1046,7 @@ class Player {
   }
 
   reset() {
+    if (this.native) this.engine.stop();
     this.wantPlay = false;
     this.cancelTransition();
     this.stopDeck(0);

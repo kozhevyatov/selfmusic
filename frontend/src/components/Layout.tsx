@@ -1,3 +1,4 @@
+import { isNative } from "@/lib/native";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -52,7 +53,7 @@ const NAV = [
   { to: "/favorites", label: "Избранное", icon: Heart },
   { to: "/stats", label: "Статистика", icon: ChartColumn },
   { to: "/folders", label: "Папки", icon: Folder },
-  { to: "/offline", label: "Скачанное", icon: CircleCheck },
+  ...(isNative ? [] : [{ to: "/offline", label: "Скачанное", icon: CircleCheck }]),
 ];
 
 const TABS = [

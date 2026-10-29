@@ -1,3 +1,4 @@
+import { isNative } from "@/lib/native";
 import { useRef, type PointerEvent as RPointerEvent, type ReactNode } from "react";
 import { Dialog } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/input";
@@ -158,6 +159,7 @@ export function SoundSettingsCard({ onOpenEq }: { onOpenEq: () => void }) {
           </div>
         )}
       </Row>
+      {!isNative && (
       <Row
         title="Кроссфейд"
         text="Конец трека плавно перетекает в начало следующего."
@@ -181,11 +183,15 @@ export function SoundSettingsCard({ onOpenEq }: { onOpenEq: () => void }) {
           </label>
         )}
       </Row>
+      )}
+      {!isNative && (
       <Row
         title="Без пауз между треками"
         text="Следующий трек заранее загружается и начинается сразу — концертные альбомы звучат слитно."
         control={<Switch label="Без пауз между треками" checked={s.gapless} onChange={(v) => setAudioSettings({ gapless: v })} />}
       />
+      )}
+      {!isNative && (
       <Row
         title="Эквалайзер"
         text={s.eq.enabled ? `Включён · ${preset}` : "Выключен"}
@@ -195,6 +201,13 @@ export function SoundSettingsCard({ onOpenEq }: { onOpenEq: () => void }) {
           </button>
         }
       />
+      )}
+      {isNative && (
+        <p className="pt-4 text-[13px] text-muted">
+          В приложении звук играет системный плеер Android: переходы между треками без пауз — всегда. Эквалайзер и кроссфейд пока работают
+          только в браузере.
+        </p>
+      )}
       {isIOS && (s.eq.enabled || s.crossfade > 0 || s.normalize) && (
         <div className="pt-4">
           <IosNote />

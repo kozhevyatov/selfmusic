@@ -16,6 +16,7 @@ from ..security import (
     REFRESH_COOKIE,
     clear_session_cookies,
     create_access_token,
+    create_media_token,
     create_refresh_token,
     decode_token,
     get_current_user,
@@ -33,6 +34,7 @@ def issue_tokens(user: User, request: Request, response: Response, remember: boo
     return TokenOut(
         access_token=create_access_token(user),
         refresh_token=refresh,
+        media_token=create_media_token(user, remember),
         user=UserOut.model_validate(user),
     )
 

@@ -4,6 +4,7 @@
  * сервер ставит отдельную media-cookie, поэтому <audio> и <img> работают без заголовков.
  * При 401 клиент один раз обновляет токен и повторяет запрос.
  */
+import { isNative, nativeInfo, sendNative } from "./native";
 import { setOffline, whenBackOnline } from "./network";
 
 export type Quality = "original" | "320" | "192" | "128";
@@ -28,7 +29,7 @@ export type User = {
   last_seen_at: string | null;
 };
 
-export type TokenResponse = { access_token: string; refresh_token: string; token_type: string; user: User };
+export type TokenResponse = { access_token: string; refresh_token: string; media_token?: string | null; token_type: string; user: User };
 
 export type SetupStatus = {
   database_configured: boolean;
@@ -538,6 +539,12 @@ export function cachedUser(): User | null {
 
 export function setSession(data: TokenResponse | null) {
   accessToken = data?.access_token ?? null;
+  if (isNative) {
+    // Android-приложению — свежие токены (нативный плеер засчитывает прослушивания и берёт поток)
+    // или сигнал «вышли из аккаунта» (приложение вернётся к своему экрану входа)
+    if (data) sendNative("auth", { refresh_token: data.refresh_token, media_token: data.media_token ?? null, username: data.user.username });
+    else sendNative("logout");
+  }
   rememberUser(data?.user ?? null);
   listeners.forEach((fn) => fn(data?.user ?? null));
 }
@@ -596,9 +603,14 @@ whenBackOnline(() => {
   if (!accessToken && cachedUser()) void refreshSession();
 });
 
+let nativeTokenUsed = false;
+
 export async function refreshSession(): Promise<TokenResponse | null> {
   if (!refreshPromise) {
-    refreshPromise = raw<TokenResponse>("/api/auth/refresh", { method: "POST", body: "{}" })
+    // В приложении первый раз входим токеном, который дал его экран входа (у WebView ещё нет cookie)
+    const nativeToken = isNative && !nativeTokenUsed ? nativeInfo?.refreshToken : null;
+    if (nativeToken) nativeTokenUsed = true;
+    refreshPromise = raw<TokenResponse>("/api/auth/refresh", { method: "POST", body: nativeToken ? JSON.stringify({ refresh_token: nativeToken }) : "{}" })
       .then((data) => {
         setSession(data);
         return data;

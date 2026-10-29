@@ -1,3 +1,4 @@
+import { isNative } from "@/lib/native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, coverUrl } from "@/lib/api";
 import { setFavorite } from "@/lib/actions";
@@ -651,13 +652,15 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
           </Link>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            aria-label="Эквалайзер"
-            onClick={() => setEqOpen(true)}
-            className="flex size-11 items-center justify-center rounded-full bg-white/10 hover:bg-white/20"
-          >
-            <SlidersHorizontal className="size-5" />
-          </button>
+          {!isNative && (
+            <button
+              aria-label="Эквалайзер"
+              onClick={() => setEqOpen(true)}
+              className="flex size-11 items-center justify-center rounded-full bg-white/10 hover:bg-white/20"
+            >
+              <SlidersHorizontal className="size-5" />
+            </button>
+          )}
           <TrackMenuButton
             track={track}
             className="flex size-11 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20"
