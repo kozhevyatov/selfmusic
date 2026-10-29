@@ -738,6 +738,27 @@ class Player {
     this.load(index, true);
   }
 
+  /** Подхватить очередь с другого устройства: трек index с позиции time.
+   *  autoplay — только по нажатию пользователя (иначе браузер не даст включить звук). */
+  adoptQueue(tracks: Track[], index: number, time: number, autoplay: boolean) {
+    if (!tracks[index]) return;
+    if (autoplay) this.engage();
+    this.stopDeck(1 - this.active);
+    this.syncBook(true);
+    this.set({ queue: tracks, order: null, shuffle: false, radio: null, book: null, speed: 1 });
+    this.deckIndex[this.active] = null;
+    this.load(index, autoplay);
+    if (time > 1) {
+      const a = this.audio;
+      const apply = () => {
+        if (time < a.duration - 2) a.currentTime = time;
+      };
+      if (a.readyState >= 1) apply();
+      else a.addEventListener("loadedmetadata", apply, { once: true });
+      this.set({ time });
+    }
+  }
+
   playNext(tracks: Track[]) {
     if (!this.state.queue.length) return this.play(tracks);
     const q = this.state.queue.slice();

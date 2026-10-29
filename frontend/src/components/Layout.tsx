@@ -34,6 +34,9 @@ import {
 } from "./icons";
 import { BalalaikaMark, Brand } from "./Logo";
 import { MiniPlayer, NowPlaying, PlayerBar } from "./Player";
+import { SyncOfferCard, UpdateCard } from "./SyncOffer";
+import { startUpdateChecks } from "@/lib/updates";
+import { startSync } from "@/lib/sync";
 import OfflinePage from "@/pages/OfflinePage";
 import { useOffline } from "@/lib/network";
 import { Menu } from "./ui/menu";
@@ -271,6 +274,8 @@ export function Layout({ children }: { children: ReactNode }) {
   const offline = useOffline();
 
   useEffect(() => setExpanded(false), [pathname]);
+  useEffect(() => startSync(), []);
+  useEffect(() => startUpdateChecks(), []);
 
   // Пробел — пауза/играть (если фокус не в поле ввода)
   useEffect(() => {
@@ -307,6 +312,8 @@ export function Layout({ children }: { children: ReactNode }) {
       <PlayerBar onExpand={open} />
       <MiniPlayer onExpand={open} />
       <TabBar />
+      <SyncOfferCard />
+      <UpdateCard />
       <NowPlaying open={expanded} onClose={close} />
     </div>
   );

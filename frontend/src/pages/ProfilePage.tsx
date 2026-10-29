@@ -169,7 +169,7 @@ function AvatarCard() {
 export default function ProfilePage() {
   const { user, logout } = useAuth();
   const theme = useTheme();
-  const [form, setForm] = useState({ display_name: user?.display_name ?? "", email: user?.email ?? "" });
+  const [form, setForm] = useState({ display_name: user?.display_name ?? "", username: user?.username ?? "", email: user?.email ?? "" });
   const [pw, setPw] = useState({ current: "", next: "" });
   const [busy, setBusy] = useState<string | null>(null);
   const [eqOpen, setEqOpen] = useState(false);
@@ -217,6 +217,43 @@ export default function ProfilePage() {
       <PageHeader title="Профиль" subtitle={`${user.username}${user.is_admin ? " · администратор" : ""}`} />
 
       <AvatarCard />
+
+      <Card>
+        <form onSubmit={saveProfile} className="grid gap-5">
+          <h2 className="text-lg font-extrabold">Имя, логин и почта</h2>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field id="p-name" label="Имя">
+              <Input id="p-name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
+            </Field>
+            <Field
+              id="p-login"
+              label="Логин"
+              hint={
+                form.username !== user.username
+                  ? "После сохранения входите с новым логином — и в приложениях Subsonic тоже"
+                  : "Для входа на сайт и в приложениях Subsonic"
+              }
+            >
+              <Input
+                id="p-login"
+                required
+                autoCapitalize="none"
+                pattern="[a-zA-Z0-9_.\-]{3,64}"
+                value={form.username}
+                onChange={(e) => setForm({ ...form, username: e.target.value.trim() })}
+              />
+            </Field>
+            <Field id="p-email" label="Email">
+              <Input id="p-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            </Field>
+          </div>
+          <div>
+            <Button type="submit" disabled={busy === "profile"}>
+              {busy === "profile" && <LoaderCircle className="size-4 animate-spin" />} Сохранить
+            </Button>
+          </div>
+        </form>
+      </Card>
 
       <Card className="flex flex-col gap-4">
         <div>
@@ -300,24 +337,6 @@ export default function ProfilePage() {
 
       <AppAccess />
 
-      <Card>
-        <form onSubmit={saveProfile} className="grid gap-5">
-          <h2 className="text-lg font-extrabold">Данные</h2>
-          <div className="grid gap-5 sm:grid-cols-2">
-            <Field id="p-name" label="Имя">
-              <Input id="p-name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
-            </Field>
-            <Field id="p-email" label="Email">
-              <Input id="p-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-            </Field>
-          </div>
-          <div>
-            <Button type="submit" disabled={busy === "profile"}>
-              {busy === "profile" && <LoaderCircle className="size-4 animate-spin" />} Сохранить
-            </Button>
-          </div>
-        </form>
-      </Card>
 
       <Card>
         <form onSubmit={changePassword} className="grid gap-5">

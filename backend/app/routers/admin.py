@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -33,6 +33,7 @@ from ..books import natural_key
 from ..models import Track
 from ..scanner import SKIP_DIRS
 from ..security import hash_password, require_admin
+from .profile import remove_avatar, save_avatar
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
@@ -154,6 +155,22 @@ def update_user(
     db.commit()
     db.refresh(user)
     return _user_out(db, user)
+
+
+@router.post("/admin/users/{user_id}/avatar")
+def admin_upload_avatar(user_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), _: User = Depends(require_admin)) -> dict:
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    return _user_out(db, save_avatar(db, user, file))
+
+
+@router.delete("/admin/users/{user_id}/avatar")
+def admin_delete_avatar(user_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)) -> dict:
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Пользователь не найден")
+    return _user_out(db, remove_avatar(db, user))
 
 
 @router.put("/admin/users/{user_id}/access")

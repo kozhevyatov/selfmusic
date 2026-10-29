@@ -107,6 +107,22 @@ export type AlbumDetail = Album & {
 
 export type Artist = { id: number; name: string; album_count: number; cover: string | null; starred: boolean };
 
+export type RemoteQueue =
+  | { empty: true; server_time: string }
+  | {
+      empty: false;
+      server_time: string;
+      changed_at: string;
+      device_id: string;
+      device_name: string;
+      playing: boolean;
+      current_id: number;
+      position: number;
+      count: number;
+      current?: Track;
+      tracks?: Track[];
+    };
+
 export type FavoriteArtist = Artist & { plays: number; seconds: number };
 
 export type StatsPeriod = "week" | "month" | "year" | "all";
@@ -689,7 +705,7 @@ export const api = {
   },
 
   me: {
-    update: (data: Partial<Pick<User, "display_name" | "email" | "stream_quality">>) =>
+    update: (data: Partial<Pick<User, "display_name" | "email" | "stream_quality" | "username">>) =>
       request<User>("/api/me", { method: "PATCH", body: json(data) }),
     changePassword: (current_password: string, new_password: string) =>
       request<TokenResponse>("/api/me/password", { method: "POST", body: json({ current_password, new_password }) }),
@@ -720,6 +736,11 @@ export const api = {
 
   library: {
     home: () => request<Home>("/api/home"),
+    remoteQueue: (full = false) => request<RemoteQueue>(`/api/queue${qs({ full: full || undefined })}`),
+    saveQueue: (
+      data: { track_ids: number[]; current_id: number | null; position: number; playing: boolean; device_id: string; device_name: string },
+      keepalive = false,
+    ) => request<{ changed_at: string }>("/api/queue", { method: "PUT", body: json(data), keepalive }),
     stats: (p: { period: StatsPeriod; year?: number | null; scope?: "me" | "server" }) =>
       request<StatsResult>(`/api/stats${qs({ period: p.period, year: p.year ?? undefined, scope: p.scope ?? "me", tz: -new Date().getTimezoneOffset() })}`),
     libraries: () => request<MyLibrary[]>("/api/libraries"),
@@ -846,6 +867,12 @@ export const api = {
       upload_max_files: number;
       can_share: boolean;
     }) => request<AdminUser>("/api/admin/users", { method: "POST", body: json(data) }),
+    uploadUserAvatar: (id: number, image: Blob) => {
+      const form = new FormData();
+      form.append("file", image, "avatar.jpg");
+      return request<AdminUser>(`/api/admin/users/${id}/avatar`, { method: "POST", body: form });
+    },
+    deleteUserAvatar: (id: number) => request<AdminUser>(`/api/admin/users/${id}/avatar`, { method: "DELETE" }),
     updateUser: (id: number, data: Partial<Omit<User, "id" | "created_at" | "last_seen_at" | "stream_quality">>) =>
       request<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body: json(data) }),
     setAccess: (id: number, access: { library_id: number; can_write: boolean }[]) =>

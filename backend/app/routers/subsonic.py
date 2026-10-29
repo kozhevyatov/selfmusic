@@ -989,6 +989,8 @@ def save_play_queue(c: Ctx) -> dict:
     pq.position_ms = c.p.int("position", 0, 0) or 0
     pq.changed_by = (c.p.get("c") or "")[:128]
     pq.changed_at = datetime.now(timezone.utc)
+    pq.device_id = f"subsonic:{pq.changed_by}"[:64]
+    pq.playing = False  # клиенты Subsonic не сообщают, играет ли сейчас
     c.db.merge(pq)
     c.db.commit()
     return {}

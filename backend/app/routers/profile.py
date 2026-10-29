@@ -40,6 +40,10 @@ def me(user: User = Depends(get_current_user)) -> User:
 def update_profile(data: ProfileUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> User:
     if data.display_name is not None:
         user.display_name = " ".join(data.display_name.split()) or user.username
+    if data.username is not None and data.username != user.username:
+        if db.scalar(select(func.count()).select_from(User).where(User.username == data.username, User.id != user.id)):
+            raise HTTPException(409, "Этот логин уже занят")
+        user.username = data.username
     if data.email is not None:
         email = data.email.strip().lower()
         if email != user.email:
@@ -116,8 +120,7 @@ def avatar_file(user_id: int):  # noqa: ANN201
     return AVATAR_DIR / f"u{user_id}.webp"
 
 
-@router.post("/avatar", response_model=UserOut)
-def upload_avatar(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> User:
+def save_avatar(db: Session, user: User, file: UploadFile) -> User:
     """Картинку обрезает в квадрат браузер; здесь — проверка, страховочная обрезка по центру и WebP 512×512."""
     data = file.file.read(15 * 1024 * 1024 + 1)
     if len(data) > 15 * 1024 * 1024:
@@ -138,13 +141,22 @@ def upload_avatar(file: UploadFile = File(...), db: Session = Depends(get_db), u
     return user
 
 
-@router.delete("/avatar", response_model=UserOut)
-def delete_avatar(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> User:
+def remove_avatar(db: Session, user: User) -> User:
     avatar_file(user.id).unlink(missing_ok=True)
     user.avatar_version = 0
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.post("/avatar", response_model=UserOut)
+def upload_avatar(file: UploadFile = File(...), db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> User:
+    return save_avatar(db, user, file)
+
+
+@router.delete("/avatar", response_model=UserOut)
+def delete_avatar(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> User:
+    return remove_avatar(db, user)
 
 
 avatar_router = APIRouter(tags=["profile"])

@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { AvatarCropper } from "@/components/AvatarCropper";
 import { Avatar } from "@/components/Cover";
 import { FolderBrowser } from "@/components/FolderBrowser";
 import { FolderRulesTree } from "@/components/FolderRulesTree";
@@ -6,6 +7,7 @@ import {
   Folder,
   FolderPlus,
   FolderTree,
+  Image as ImageIcon,
   KeyRound,
   LoaderCircle,
   Lock,
@@ -22,7 +24,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge, Card, ErrorBox, PageLoader, Progress } from "@/components/ui/misc";
 import { Segmented, Switch } from "@/components/ui/switch";
-import { api, type AdminLibrary, type AdminUser, type DuplicatesResult, type UploadMode } from "@/lib/api";
+import { api, updateCurrentUser, type AdminLibrary, type AdminUser, type DuplicatesResult, type UploadMode } from "@/lib/api";
 import { Link } from "@/lib/router";
 import { useAuth } from "@/lib/auth";
 import { dialogs } from "@/lib/dialogs";
@@ -501,6 +503,7 @@ function UserDetail({ user, libs, me }: { user: AdminUser; libs: AdminLibrary[];
   const [maxFiles, setMaxFiles] = useState(String(user.upload_max_files || ""));
   const [pwOpen, setPwOpen] = useState(false);
   const [pw, setPw] = useState("");
+  const [editOpen, setEditOpen] = useState(false);
   useEffect(() => {
     setQuota(String(user.upload_quota_mb || ""));
     setMaxFiles(String(user.upload_max_files || ""));
@@ -536,7 +539,9 @@ function UserDetail({ user, libs, me }: { user: AdminUser; libs: AdminLibrary[];
   return (
     <Card className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-4">
-        <Avatar name={user.display_name || user.username} src={user.avatar} className="size-14 text-xl" />
+        <button type="button" onClick={() => setEditOpen(true)} aria-label="Изменить профиль" className="rounded-full transition hover:opacity-85">
+          <Avatar name={user.display_name || user.username} src={user.avatar} className="size-14 text-xl" />
+        </button>
         <div className="min-w-0 flex-1">
           <h2 className="truncate text-xl font-extrabold">{user.display_name || user.username}</h2>
           <div className="truncate text-sm text-muted">
@@ -544,6 +549,9 @@ function UserDetail({ user, libs, me }: { user: AdminUser; libs: AdminLibrary[];
           </div>
         </div>
         <div className="flex gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setEditOpen(true)}>
+            <Pencil className="size-4" /> Изменить
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => setPwOpen(true)}>
             <KeyRound className="size-4" /> Пароль
           </Button>
@@ -740,7 +748,129 @@ function UserDetail({ user, libs, me }: { user: AdminUser; libs: AdminLibrary[];
           </Field>
         </form>
       </Dialog>
+      <EditUserDialog open={editOpen} onClose={() => setEditOpen(false)} user={user} isMe={user.id === me} />
     </Card>
+  );
+}
+
+/** Имя, логин, email и аватарка пользователя — для администратора. */
+function EditUserDialog({ open, onClose, user, isMe }: { open: boolean; onClose: () => void; user: AdminUser; isMe: boolean }) {
+  const [form, setForm] = useState({ display_name: user.display_name, username: user.username, email: user.email });
+  const [busy, setBusy] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (open) setForm({ display_name: user.display_name, username: user.username, email: user.email });
+  }, [open, user.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const done = (u: AdminUser) => {
+    invalidate(["admin"], ["playlists"]);
+    if (isMe) updateCurrentUser(u);
+  };
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      done(await api.admin.updateUser(user.id, form));
+      toast.success("Сохранено");
+      onClose();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const loginChanged = form.username !== user.username;
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Профиль пользователя"
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Отмена
+          </Button>
+          <Button type="submit" form="edit-user" disabled={busy}>
+            {busy && <LoaderCircle className="size-4 animate-spin" />} Сохранить
+          </Button>
+        </>
+      }
+    >
+      <form id="edit-user" onSubmit={submit} className="grid gap-5">
+        <div className="flex flex-wrap items-center gap-4">
+          <Avatar name={form.display_name || form.username} src={user.avatar} className="size-20 text-3xl" />
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={() => input.current?.click()}>
+              <ImageIcon className="size-4" /> {user.avatar ? "Заменить фото" : "Загрузить фото"}
+            </Button>
+            {user.avatar && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    done(await api.admin.deleteUserAvatar(user.id));
+                  } catch (err) {
+                    toast.error((err as Error).message);
+                  }
+                }}
+              >
+                <Trash className="size-4" /> Удалить
+              </Button>
+            )}
+          </div>
+          <input
+            ref={input}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) setFile(f);
+            }}
+          />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field id="eu-name" label="Имя">
+            <Input id="eu-name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
+          </Field>
+          <Field
+            id="eu-login"
+            label="Логин"
+            hint={loginChanged ? "Для входа и в Subsonic-приложениях нужно будет указать новый логин" : "Латиница, цифры, точка, дефис"}
+          >
+            <Input
+              id="eu-login"
+              required
+              pattern="[a-zA-Z0-9_.\-]{3,64}"
+              autoCapitalize="none"
+              value={form.username}
+              onChange={(e) => setForm({ ...form, username: e.target.value.trim() })}
+            />
+          </Field>
+          <div className="sm:col-span-2">
+            <Field id="eu-email" label="Email">
+              <Input id="eu-email" type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+            </Field>
+          </div>
+        </div>
+      </form>
+      <AvatarCropper
+        file={file}
+        onCancel={() => setFile(null)}
+        onDone={async (blob) => {
+          try {
+            done(await api.admin.uploadUserAvatar(user.id, blob));
+            setFile(null);
+            toast.success("Аватарка обновлена");
+          } catch (err) {
+            toast.error((err as Error).message);
+          }
+        }}
+      />
+    </Dialog>
   );
 }
 

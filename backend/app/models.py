@@ -288,6 +288,9 @@ class PlayQueue(Base):
     position_ms: Mapped[int] = mapped_column(BigInteger, default=0)
     changed_by: Mapped[str] = mapped_column(String(128), default="")
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # синхронизация между устройствами: кто записал и играет ли там сейчас
+    device_id: Mapped[str] = mapped_column(String(64), default="")
+    playing: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Share(Base):

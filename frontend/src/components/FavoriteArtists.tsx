@@ -4,7 +4,8 @@ import { Section } from "@/components/Section";
 import { playArtist } from "@/lib/actions";
 import type { FavoriteArtist } from "@/lib/api";
 import { Link } from "@/lib/router";
-import { hoursLabel, nf } from "@/lib/stats";
+import { formatDuration } from "@/lib/format";
+import { nf } from "@/lib/stats";
 import { cn, plural } from "@/lib/utils";
 
 function FavoriteArtistCard({ artist, rank }: { artist: FavoriteArtist; rank: number }) {
@@ -30,7 +31,8 @@ function FavoriteArtistCard({ artist, rank }: { artist: FavoriteArtist; rank: nu
       </div>
       <div className="w-full min-w-0">
         <div className="truncate text-[15px] font-bold">{artist.name}</div>
-        <div className="text-[13px] text-muted" title={hoursLabel(artist.seconds)}>
+        <div className="text-[13px] font-semibold text-muted">{formatDuration(artist.seconds)}</div>
+        <div className="text-[12px] text-faint">
           {nf(artist.plays)} {plural(artist.plays, "прослушивание", "прослушивания", "прослушиваний")}
         </div>
       </div>

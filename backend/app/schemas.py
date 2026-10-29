@@ -77,6 +77,7 @@ class UserOut(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
+    username: str | None = Field(default=None, pattern=USERNAME_PATTERN)
     display_name: str | None = Field(default=None, max_length=128)
     email: str | None = Field(default=None, pattern=EMAIL_PATTERN, max_length=255)
     stream_quality: Quality | None = None
