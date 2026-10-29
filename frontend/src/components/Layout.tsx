@@ -30,6 +30,7 @@ import {
   Sun,
   Upload,
   User,
+  ChartColumn,
 } from "./icons";
 import { BalalaikaMark, Brand } from "./Logo";
 import { MiniPlayer, NowPlaying, PlayerBar } from "./Player";
@@ -45,6 +46,7 @@ const NAV = [
   { to: "/artists", label: "Исполнители", icon: MicVocal },
   { to: "/playlists", label: "Плейлисты", icon: ListMusic },
   { to: "/favorites", label: "Избранное", icon: Heart },
+  { to: "/stats", label: "Статистика", icon: ChartColumn },
   { to: "/folders", label: "Папки", icon: Folder },
   { to: "/offline", label: "Скачанное", icon: CircleCheck },
 ];
@@ -224,7 +226,7 @@ function MobileHeader() {
 
 function TabBar() {
   const { pathname } = useLocation();
-  const libraryPaths = ["/library", "/mixes", "/offline", "/books", "/albums", "/artists", "/favorites", "/folders", "/upload", "/shares"];
+  const libraryPaths = ["/library", "/stats", "/mixes", "/offline", "/books", "/albums", "/artists", "/favorites", "/folders", "/upload", "/shares"];
   return (
     <nav
       aria-label="Разделы"

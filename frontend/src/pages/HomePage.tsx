@@ -1,5 +1,5 @@
 import { NowMixHero } from "@/pages/MixesPage";
-import { ArtistCard, AlbumCard, CardGrid } from "@/components/Cards";
+import { AlbumCard, CardGrid } from "@/components/Cards";
 import { Cover } from "@/components/Cover";
 import { PlayFill } from "@/components/icon";
 import { Dices, Folder, FolderPlus, Upload } from "@/components/icons";
@@ -13,6 +13,7 @@ import { formatDuration, greeting } from "@/lib/format";
 import { player, useCurrentTrack, usePlayer } from "@/lib/player";
 import { useQuery } from "@/lib/query";
 import { Link } from "@/lib/router";
+import { FavoriteArtists } from "@/components/FavoriteArtists";
 import { countLabel } from "@/lib/utils";
 
 function SuggestCard({ album }: { album: Album }) {
@@ -178,15 +179,7 @@ export default function HomePage() {
         </Section>
       )}
 
-      {d.frequent_artists.length > 0 && (
-        <Section title={d.recently_played.length ? "Часто слушаешь" : "Исполнители"} link="/artists">
-          <CardGrid row artists>
-            {d.frequent_artists.slice(0, 8).map((a) => (
-              <ArtistCard key={a.id} artist={a} />
-            ))}
-          </CardGrid>
-        </Section>
-      )}
+      <FavoriteArtists artists={d.favorite_artists} />
 
       {d.random_albums.length > 0 && (
         <Section title="Наугад из коллекции" link="/albums?sort=random" linkLabel="Ещё">

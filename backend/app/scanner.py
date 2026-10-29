@@ -21,6 +21,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from . import db as dbmod
+from . import folders
 from .app_settings import get_setting, set_setting
 from .models import Album, Artist, Book, Library, Play, PlaylistEntry, Star, Track, Upload
 from .books import UNKNOWN_AUTHOR, book_tags, file_chapters, natural_key, parse_book_folder, read_text_file, split_path
@@ -241,7 +242,10 @@ def reindex_paths(db: Session, lib: Library, rels: list[str], removed: list[str]
                 db.delete(track)
             db.execute(delete(Upload).where(Upload.library_id == lib.id, Upload.path_hash == path_hash(rel)))
         db.flush()
+        rules = folders.parse(lib.folder_rules)
         for rel in rels:
+            if not folders.file_included(rules, rel):
+                continue  # папка исключена из медиатеки
             abs_path = root / rel
             try:
                 st = abs_path.stat()
@@ -401,6 +405,8 @@ class Scanner:
         ctx = IndexContext()
         seen: set[str] = set()
         checked = changed = 0
+        rules = folders.parse(lib.folder_rules)
+        excluded_hit = False
         visited: set[tuple[int, int]] = set()  # защита от петель из символических ссылок
         bad_names: list[str] = []
         last_commit = time.monotonic()
@@ -415,6 +421,20 @@ class Scanner:
             except OSError:
                 continue
             dirnames[:] = sorted(d for d in dirnames if not SKIP_DIRS.match(d))
+            if rules:
+                rel_dir = Path(dirpath).relative_to(root).as_posix()
+                rel_dir = "" if rel_dir == "." else rel_dir
+                keep = []
+                for d in dirnames:
+                    child = f"{rel_dir}/{d}" if rel_dir else d
+                    if folders.included(rules, child) or folders.included_below(rules, child):
+                        keep.append(d)
+                    else:
+                        excluded_hit = True
+                dirnames[:] = keep
+                if not folders.included(rules, rel_dir):
+                    excluded_hit = True
+                    continue  # сама папка исключена, но внутри есть возвращённые подпапки
             for fname in sorted(filenames):
                 ext = os.path.splitext(fname)[1].lower()
                 if ext not in AUDIO_EXTENSIONS or fname.startswith("."):
@@ -460,7 +480,7 @@ class Scanner:
 
         self._progress(checked=checked, changed=changed, phase="Обновление альбомов")
         missing = [row for path, row in existing.items() if path not in seen]
-        if missing and not seen:
+        if missing and not seen and not excluded_hit:
             # Папка пуста, а в базе были треки — скорее всего, том не смонтирован. Ничего не удаляем.
             lib.last_scan_error = "В папке не найдено ни одного файла — медиатека не изменена"
             lib.last_scan_at = utcnow()
@@ -470,9 +490,10 @@ class Scanner:
             chunk = missing[i : i + 500]
             ctx.touched.update(r.album_id for r in chunk)
             db.execute(delete(Track).where(Track.id.in_([r.id for r in chunk])))
-            db.execute(
-                delete(Upload).where(Upload.library_id == lib.id, Upload.path_hash.in_([path_hash(r.path) for r in chunk]))
-            )
+            # файлы из исключённых папок остаются на диске — их учёт загрузок (квоты) не трогаем
+            gone = [r.path for r in chunk if folders.file_included(rules, r.path)]
+            if gone:
+                db.execute(delete(Upload).where(Upload.library_id == lib.id, Upload.path_hash.in_([path_hash(p) for p in gone])))
         result["removed"] = len(missing)
         db.commit()
 

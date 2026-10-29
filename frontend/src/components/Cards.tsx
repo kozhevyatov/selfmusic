@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { Avatar, Cover } from "./Cover";
 import { PlayFill } from "./icon";
 
-function PlayOverlay({ onPlay, label }: { onPlay: () => void; label: string }) {
+export function PlayOverlay({ onPlay, label }: { onPlay: () => void; label: string }) {
   return (
     <button
       aria-label={label}

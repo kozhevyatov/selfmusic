@@ -92,6 +92,8 @@ class Library(Base):
     kind: Mapped[str] = mapped_column(String(16), default="music")
     # Личная папка пользователя (для загрузок). У общих папок — NULL.
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    # исключённые/возвращённые подпапки (см. app/folders.py)
+    folder_rules: Mapped[str | None] = mapped_column(LongText, nullable=True)
     track_count: Mapped[int] = mapped_column(Integer, default=0)
     album_count: Mapped[int] = mapped_column(Integer, default=0)
     total_size: Mapped[int] = mapped_column(BigInteger, default=0)

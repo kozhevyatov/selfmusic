@@ -25,6 +25,7 @@ import FavoritesPage from "@/pages/FavoritesPage";
 import FoldersPage from "@/pages/FoldersPage";
 import FolderPage from "@/pages/FolderPage";
 import MixesPage from "@/pages/MixesPage";
+import StatsPage from "@/pages/StatsPage";
 import BooksPage from "@/pages/BooksPage";
 import BookPage from "@/pages/BookPage";
 import MixPage from "@/pages/MixPage";
@@ -100,6 +101,7 @@ export default function App() {
           { path: "/playlists", element: <PlaylistsPage /> },
           { path: "/playlists/:id", element: <PlaylistPage /> },
           { path: "/favorites", element: <FavoritesPage /> },
+          { path: "/stats", element: <StatsPage /> },
           { path: "/mixes", element: <MixesPage /> },
           { path: "/books", element: <BooksPage /> },
           { path: "/books/:id", element: <BookPage /> },

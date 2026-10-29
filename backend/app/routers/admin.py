@@ -28,7 +28,10 @@ from ..schemas import (
     UserAdminUpdate,
     UserOut,
 )
-from .. import duplicates
+from .. import duplicates, folders
+from ..books import natural_key
+from ..models import Track
+from ..scanner import SKIP_DIRS
 from ..security import hash_password, require_admin
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -212,6 +215,7 @@ def _library_out(db: Session, lib: Library) -> dict:
         "last_scan_error": lib.last_scan_error,
         "exists": os.path.isdir(lib.path),
         "user_count": users or 0,
+        "excluded_count": sum(1 for v in folders.parse(lib.folder_rules).values() if not v),
     }
 
 
@@ -275,6 +279,94 @@ def update_library(
     if rescan:
         scanner.start(library_id=lib.id, full=True)
     return _library_out(db, lib)
+
+
+def _lib_dir(lib: Library, rel: str) -> tuple[Path, str]:
+    root = Path(lib.path).resolve()
+    rel = folders.norm(rel)
+    target = (root / rel).resolve() if rel else root
+    if target != root and root not in target.parents:
+        raise HTTPException(400, "Путь вне папки")
+    if not target.is_dir():
+        raise HTTPException(404, "Подпапка не найдена")
+    return target, rel
+
+
+@router.get("/admin/libraries/{library_id}/tree")
+def library_tree(library_id: int, path: str = "", db: Session = Depends(get_db), _: User = Depends(require_admin)) -> dict:
+    """Подпапки одного уровня: включена ли, своё правило, сколько треков в медиатеке."""
+    lib = db.get(Library, library_id)
+    if not lib:
+        raise HTTPException(404, "Папка не найдена")
+    target, rel = _lib_dir(lib, path)
+    rules = folders.parse(lib.folder_rules)
+    # треки этой ветки из базы → счётчики по подпапкам первого уровня
+    prefix = f"{rel}/" if rel else ""
+    q = select(Track.path).where(Track.library_id == lib.id)
+    if prefix:
+        esc = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        q = q.where(Track.path.like(f"{esc}%", escape="\\"))
+    counts: dict[str, int] = {}
+    here = 0
+    for (p,) in db.execute(q):
+        rest = p[len(prefix):]
+        if "/" in rest:
+            head = rest.split("/", 1)[0]
+            counts[head] = counts.get(head, 0) + 1
+        else:
+            here += 1
+    dirs = []
+    try:
+        entries = sorted(
+            (e for e in os.scandir(target) if e.is_dir() and not SKIP_DIRS.match(e.name)),
+            key=lambda e: natural_key(e.name),
+        )
+    except OSError as exc:
+        raise HTTPException(400, f"Нет доступа к папке: {exc.strerror}")
+    for e in entries[:2000]:
+        child = f"{prefix}{e.name}"
+        try:
+            has_children = any(c.is_dir() and not SKIP_DIRS.match(c.name) for c in os.scandir(e.path))
+        except OSError:
+            has_children = False
+        dirs.append(
+            {
+                "name": e.name,
+                "path": child,
+                "included": folders.included(rules, child),
+                "rule": folders.own_rule(rules, child),
+                "tracks": counts.get(e.name, 0),
+                "has_children": has_children,
+            }
+        )
+    return {
+        "path": rel,
+        "included": folders.included(rules, rel),
+        "tracks_here": here,
+        "dirs": dirs,
+        "truncated": len(entries) > 2000,
+        "excluded_count": sum(1 for v in rules.values() if not v),
+    }
+
+
+class FolderRuleIn(BaseModel):
+    path: str
+    include: bool | None = None  # None — снять своё правило (как у родителя)
+
+
+@router.put("/admin/libraries/{library_id}/folders")
+def set_folder_rule(library_id: int, data: FolderRuleIn, db: Session = Depends(get_db), _: User = Depends(require_admin)) -> dict:
+    lib = db.get(Library, library_id)
+    if not lib:
+        raise HTTPException(404, "Папка не найдена")
+    _, rel = _lib_dir(lib, data.path)
+    if not rel:
+        raise HTTPException(400, "Корневую папку отключают переключателем «Включена»")
+    rules = folders.set_rule(folders.parse(lib.folder_rules), rel, data.include)
+    lib.folder_rules = folders.dump(rules)
+    db.commit()
+    scanner.start(library_id=lib.id)  # быстрый скан: исключённое уберётся, возвращённое добавится
+    return {"ok": True, "excluded_count": sum(1 for v in rules.values() if not v)}
 
 
 @router.delete("/admin/libraries/{library_id}")

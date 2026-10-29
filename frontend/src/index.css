@@ -335,3 +335,23 @@
 .range.always::-moz-range-thumb {
   opacity: 1;
 }
+
+/* «Итоги»: элементы слайда выплывают снизу */
+@keyframes story-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.story-in {
+  animation: story-in 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .story-in {
+    animation: none;
+  }
+}

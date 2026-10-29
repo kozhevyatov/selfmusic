@@ -1,9 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Avatar } from "@/components/Cover";
 import { FolderBrowser } from "@/components/FolderBrowser";
+import { FolderRulesTree } from "@/components/FolderRulesTree";
 import {
   Folder,
   FolderPlus,
+  FolderTree,
   KeyRound,
   LoaderCircle,
   Lock,
@@ -358,6 +360,7 @@ function LibrariesTab() {
   const libs = useQuery(["admin", "libraries"], api.admin.libraries);
   const [editing, setEditing] = useState<AdminLibrary | null>(null);
   const [adding, setAdding] = useState(false);
+  const [treeOpen, setTreeOpen] = useState<Set<number>>(new Set());
   if (libs.isLoading) return <PageLoader />;
   if (libs.error) return <ErrorBox error={libs.error} />;
   const shared = libs.data!.filter((l) => !l.owner);
@@ -400,6 +403,7 @@ function LibrariesTab() {
             {!l.enabled && <Badge>выключена</Badge>}
             {l.owner && <Badge>личная · {l.owner.name}</Badge>}
             {l.writable ? <Badge className="border-success/40 text-success">чтение и запись</Badge> : <Badge>только чтение</Badge>}
+            {l.excluded_count > 0 && <Badge>исключено подпапок: {l.excluded_count}</Badge>}
           </div>
           <div className="truncate text-[13px] text-faint">{l.path}</div>
           <div className="mt-1.5 text-sm text-muted">
@@ -429,7 +433,24 @@ function LibrariesTab() {
             <Switch checked={l.default_access} onChange={(v) => patch(l, { default_access: v })} label="Для новых пользователей" /> Для новых пользователей
           </label>
         )}
-        <div className="ml-auto flex gap-1">
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          {l.exists && (
+            <Button
+              variant={treeOpen.has(l.id) ? "secondary" : "ghost"}
+              size="sm"
+              aria-expanded={treeOpen.has(l.id)}
+              onClick={() =>
+                setTreeOpen((s) => {
+                  const n = new Set(s);
+                  if (n.has(l.id)) n.delete(l.id);
+                  else n.add(l.id);
+                  return n;
+                })
+              }
+            >
+              <FolderTree className="size-4" /> Подпапки
+            </Button>
+          )}
           <Button variant="ghost" size="icon-sm" aria-label="Сканировать" title="Сканировать" onClick={() => api.admin.scan(l.id).then(() => invalidate(["admin", "scan"]))}>
             <RefreshCw className="size-4" />
           </Button>
@@ -441,6 +462,7 @@ function LibrariesTab() {
           </Button>
         </div>
       </div>
+      {treeOpen.has(l.id) && <FolderRulesTree libId={l.id} />}
     </Card>
   );
 
@@ -453,11 +475,11 @@ function LibrariesTab() {
           <FolderPlus className="size-4" /> Добавить папку
         </Button>
       </div>
-      <div className="grid gap-4 xl:grid-cols-2">{shared.map(card)}</div>
+      <div className="grid items-start gap-4 xl:grid-cols-2">{shared.map(card)}</div>
       {personal.length > 0 && (
         <>
           <h2 className="mt-2 text-lg font-extrabold">Личные папки пользователей</h2>
-          <div className="grid gap-4 xl:grid-cols-2">{personal.map(card)}</div>
+          <div className="grid items-start gap-4 xl:grid-cols-2">{personal.map(card)}</div>
         </>
       )}
       <LibraryDialog open={adding} onClose={() => setAdding(false)} />

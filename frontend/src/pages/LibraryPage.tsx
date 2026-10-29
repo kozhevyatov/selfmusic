@@ -1,4 +1,4 @@
-import { BookOpen, ChevronRight, CircleCheck, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Sparkles, Upload } from "@/components/icons";
+import { BookOpen, ChartColumn, ChevronRight, CircleCheck, Disc3, Folder, Heart, Link as LinkIcon, ListMusic, MicVocal, Sparkles, Upload } from "@/components/icons";
 import { PageHeader } from "@/components/Section";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -15,6 +15,7 @@ export default function LibraryPage() {
     { to: "/albums", label: "Альбомы", icon: Disc3 },
     { to: "/artists", label: "Исполнители", icon: MicVocal },
     { to: "/favorites", label: "Избранное", icon: Heart },
+    { to: "/stats", label: "Статистика и итоги", icon: ChartColumn },
     { to: "/playlists", label: "Плейлисты", icon: ListMusic },
     { to: "/folders", label: "Папки", icon: Folder },
     { to: "/offline", label: "Скачанное", icon: CircleCheck },

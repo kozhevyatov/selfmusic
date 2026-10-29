@@ -13,6 +13,7 @@ from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from .. import smart
+from ..stats import favorite_artists
 from ..access import allowed_library_ids, can_edit_track, can_write
 from ..db import get_db
 from ..media import cover_path, download_name, file_response, image_response, content_type, stream_track, track_file
@@ -197,27 +198,7 @@ def home(db: Session = Depends(get_db), user: User = Depends(get_current_user)) 
     played = list(db.scalars(album_list_query(ids, user.id, "recent").limit(12)))
     random_albums = list(db.scalars(album_list_query(ids, user.id, "random").limit(12)))
 
-    since = datetime.now(timezone.utc) - timedelta(days=180)
-    plays = (
-        select(Album.artist_id, func.count(Play.id).label("cnt"))
-        .join(Album, Album.id == Play.album_id)
-        .where(Play.user_id == user.id, Play.played_at >= since, Album.library_id.in_(ids or [-1]))
-        .group_by(Album.artist_id)
-        .order_by(desc("cnt"))
-        .limit(12)
-    )
-    top_ids = [r[0] for r in db.execute(plays) if r[0]]
-    rows = artists_with_counts(db, ids, only_ids=top_ids) if top_ids else []
-    rows.sort(key=lambda r: top_ids.index(r[0].id))
-    frequent = _artist_cards(db, user, rows)
-    if len(frequent) < 6:
-        # Мало истории — добираем случайными исполнителями
-        extra = artists_with_counts(db, ids)
-        import random
-
-        random.shuffle(extra)
-        have = {a["id"] for a in frequent}
-        frequent += _artist_cards(db, user, [r for r in extra if r[0].id not in have][: 12 - len(frequent)])
+    favorites = favorite_artists(db, user, ids, 12)
 
     stats = db.execute(
         select(func.count(Track.id), func.coalesce(func.sum(Track.duration), 0)).where(Track.library_id.in_(ids or [-1]))
@@ -226,7 +207,7 @@ def home(db: Session = Depends(get_db), user: User = Depends(get_current_user)) 
         "recent_albums": albums_out(db, user.id, recent),
         "recently_played": albums_out(db, user.id, played),
         "random_albums": albums_out(db, user.id, random_albums),
-        "frequent_artists": frequent,
+        "favorite_artists": favorites,
         "stats": {
             "tracks": stats[0],
             "albums": db.scalar(select(func.count(Album.id)).where(Album.library_id.in_(ids or [-1]))) or 0,

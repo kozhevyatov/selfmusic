@@ -107,6 +107,34 @@ export type AlbumDetail = Album & {
 
 export type Artist = { id: number; name: string; album_count: number; cover: string | null; starred: boolean };
 
+export type FavoriteArtist = Artist & { plays: number; seconds: number };
+
+export type StatsPeriod = "week" | "month" | "year" | "all";
+export type StatsResult = {
+  kind: StatsPeriod;
+  year: number | null;
+  scale: "day" | "month" | "year";
+  years: number[];
+  totals: { plays: number; seconds: number; tracks: number; artists: number; albums: number; days: number; new_artists: number };
+  previous: { plays: number; seconds: number } | null;
+  top_artists: FavoriteArtist[];
+  top_tracks: (Track & { plays: number })[];
+  top_albums: (Album & { plays: number })[];
+  genres: { name: string; plays: number; share: number; seconds: number }[];
+  timeline: { key: string; seconds: number }[];
+  hours: number[];
+  weekdays: number[];
+  highlights: {
+    streak: number;
+    streak_end: string | null;
+    top_day: { date: string; seconds: number; plays: number } | null;
+    repeat: { date: string; count: number; track: Track } | null;
+    first: { at: string; track: Track } | null;
+  };
+  sound: { energy: number; valence: number; bpm: number | null; coverage: number; library_energy: number; library_valence: number } | null;
+  users: { id: number; name: string; avatar: string | null; plays: number; seconds: number }[] | null;
+};
+
 export type ArtistDetail = Artist & {
   albums: Album[];
   appears_on: Album[];
@@ -118,7 +146,7 @@ export type Home = {
   recent_albums: Album[];
   recently_played: Album[];
   random_albums: Album[];
-  frequent_artists: Artist[];
+  favorite_artists: FavoriteArtist[];
   stats: { tracks: number; albums: number; artists: number; duration: number };
 };
 
@@ -167,6 +195,9 @@ export type AdminUser = User & {
   personal_library_id: number | null;
 };
 
+export type FolderNode = { name: string; path: string; included: boolean; rule: boolean | null; tracks: number; has_children: boolean };
+export type FolderTree = { path: string; included: boolean; tracks_here: number; dirs: FolderNode[]; truncated: boolean; excluded_count: number };
+
 export type AdminLibrary = {
   id: number;
   name: string;
@@ -182,6 +213,7 @@ export type AdminLibrary = {
   total_duration: number;
   last_scan_at: string | null;
   last_scan_error: string | null;
+  excluded_count: number;
   exists: boolean;
   user_count: number;
 };
@@ -688,6 +720,8 @@ export const api = {
 
   library: {
     home: () => request<Home>("/api/home"),
+    stats: (p: { period: StatsPeriod; year?: number | null; scope?: "me" | "server" }) =>
+      request<StatsResult>(`/api/stats${qs({ period: p.period, year: p.year ?? undefined, scope: p.scope ?? "me", tz: -new Date().getTimezoneOffset() })}`),
     libraries: () => request<MyLibrary[]>("/api/libraries"),
     radio: (body: { track_id?: number; artist_id?: number; exclude?: number[]; count?: number }) =>
       request<{ tracks: Track[] }>("/api/radio", { method: "POST", body: json(body) }),
@@ -831,6 +865,9 @@ export const api = {
       request<AdminLibrary>("/api/admin/libraries", { method: "POST", body: json(data) }),
     updateLibrary: (id: number, data: Partial<Pick<AdminLibrary, "name" | "path" | "enabled" | "default_access" | "kind">>) =>
       request<AdminLibrary>(`/api/admin/libraries/${id}`, { method: "PATCH", body: json(data) }),
+    libraryTree: (id: number, path = "") => request<FolderTree>(`/api/admin/libraries/${id}/tree${qs({ path })}`),
+    setFolder: (id: number, path: string, include: boolean | null) =>
+      request<{ ok: true; excluded_count: number }>(`/api/admin/libraries/${id}/folders`, { method: "PUT", body: json({ path, include }) }),
     deleteLibrary: (id: number) => request<{ ok: true }>(`/api/admin/libraries/${id}`, { method: "DELETE" }),
     browse: (path = "") => request<FsListing>(`/api/admin/fs${qs({ path })}`),
     scanStatus: () => request<ScanStatus>("/api/admin/scan"),
