@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError
@@ -30,6 +31,8 @@ from ..queries import (
 from ..schemas import PlayIn, PlaylistCreate, PlaylistReorder, PlaylistTracks, PlaylistUpdate
 from ..security import get_current_user, get_media_user
 from ..serialize import album_out, albums_out, artist_out, cover_url, starred_ids, track_out, tracks_out
+
+_log = logging.getLogger("uvicorn.error")
 
 router = APIRouter(prefix="/api", tags=["library"])
 
@@ -823,6 +826,12 @@ def stream(
     track = _visible_track(db, user, track_id)
     quality = q or user.stream_quality or "original"
     bitrate = QUALITY_BITRATE.get(quality, 0)
+    # временно: разбираемся, почему Safari на iPhone начинает трек заново (какие заголовки он присылает)
+    h = request.headers
+    _log.info(
+        "stream %s q=%s range=%s session=%s ua=%s",
+        track_id, quality, h.get("range") or "-", h.get("x-playback-session-id") or "-", (h.get("user-agent") or "-")[:90],
+    )
     return stream_track(request, db, track, max_bitrate=bitrate, fmt="mp3" if bitrate else None, browser=True)
 
 
