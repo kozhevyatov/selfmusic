@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 from sqlalchemy.orm import Session
 
-from .config import COVER_CACHE, settings
+from .config import CACHE_DIR, COVER_CACHE, settings
 from .models import Album, Library, Track
 from .tags import embedded_cover
 
@@ -349,28 +349,180 @@ def transcode_response(
     )
 
 
-def ranged_mp3_response(request: Request, path: Path, bitrate: int, duration: float) -> Response:
-    """Перекодированный MP3 с поддержкой Range.
+# ---------------- перекодированный MP3 с поддержкой Range ----------------
+#
+# Safari (iPhone, PWA) запрашивает поток кусками — «байты 1589248–4695551», «32487–1589247» — и склеивает
+# их в один файл. Значит, байт N в любом ответе обязан быть тем же самым байтом одного и того же файла.
+# Поэтому трек перекодируется целиком один раз в файл кэша, а куски отдаются из него (пока файл пишется —
+# по мере готовности; ffmpeg работает в десятки раз быстрее реального времени). Размер объявляется заранее
+# (длительность × битрейт / 8, постоянный битрейт): лишнее обрезается, недостающее добивается нулями —
+# одинаково для всех запросов.
 
-    У MP3 с постоянным битрейтом размер известен заранее (длительность × битрейт / 8), а кусок с байта N —
-    это тот же поток с секунды N / (битрейт / 8). Поэтому отдаём Content-Length и честные ответы 206:
-    Safari на iPhone (и PWA) иначе дозапрашивает поток кусками, получает начало заново и играет трек сначала,
-    а перемотка в браузерах и Android-плеере без Range работает только в уже загруженной части.
-    """
+TRANSCODE_CACHE = CACHE_DIR / "transcode"
+TRANSCODE_CACHE_MB = int(os.environ.get("TRANSCODE_CACHE_MB", "2048"))
+
+
+class _Job:
+    def __init__(self, part: Path, final: Path) -> None:
+        self.part = part
+        self.final = final
+        self.done = threading.Event()
+
+
+_jobs: dict[str, _Job] = {}
+_jobs_guard = threading.Lock()
+
+
+def _take_slot() -> None:
+    global _transcodes
+    with _transcodes_guard:
+        if _transcodes >= MAX_TRANSCODES:
+            raise HTTPException(503, "Сервер занят перекодированием, попробуйте позже", headers={"Retry-After": "10"})
+        _transcodes += 1
+
+
+def _free_slot() -> None:
+    global _transcodes
+    with _transcodes_guard:
+        _transcodes = max(0, _transcodes - 1)
+
+
+def _trim_transcode_cache() -> None:
+    """Держим кэш в пределах TRANSCODE_CACHE_MB: удаляем давно не слушанные."""
+    try:
+        files = [(f.stat().st_mtime, f.stat().st_size, f) for f in TRANSCODE_CACHE.glob("*.mp3")]
+    except OSError:
+        return
+    total = sum(size for _, size, _ in files)
+    limit = TRANSCODE_CACHE_MB * 1024 * 1024
+    for _, size, f in sorted(files):
+        if total <= limit:
+            break
+        try:
+            f.unlink()
+            total -= size
+        except OSError:
+            pass
+
+
+def _run_job(key: str, job: _Job, cmd: list[str]) -> None:
+    import subprocess
+
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=_lower_priority)
+        if proc.returncode == 0:
+            os.replace(job.part, job.final)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Перекодирование не удалось")
+    finally:
+        _free_slot()
+        job.done.set()
+        with _jobs_guard:
+            _jobs.pop(key, None)
+        try:
+            job.part.unlink(missing_ok=True)
+        except OSError:
+            pass
+        _trim_transcode_cache()
+
+
+def _transcoded(path: Path, bitrate: int) -> tuple[Path, _Job | None]:
+    """Файл перекодированного трека: готовый из кэша или пишущийся сейчас (тогда вернётся и задача)."""
+    st = path.stat()
+    key = hashlib.sha1(f"{path}|{st.st_mtime_ns}|{st.st_size}|{bitrate}".encode()).hexdigest()[:20]
+    final = TRANSCODE_CACHE / f"{key}.mp3"
+    if final.exists():
+        try:
+            os.utime(final)  # «недавно слушали» — для очистки кэша
+        except OSError:
+            pass
+        return final, None
+    with _jobs_guard:
+        job = _jobs.get(key)
+        if job:
+            return job.part, job
+        _take_slot()
+        TRANSCODE_CACHE.mkdir(parents=True, exist_ok=True)
+        job = _Job(TRANSCODE_CACHE / f"{key}.{uuid.uuid4().hex[:8]}.part", final)
+        cmd = [
+            settings.ffmpeg, "-v", "error", "-nostdin", "-y", "-i", str(path), "-map", "0:a:0", "-vn", "-threads", "1",
+            "-c:a", "libmp3lame", "-b:a", f"{bitrate}k", "-ar", "44100", "-write_xing", "0", "-id3v2_version", "0",
+            "-f", "mp3", str(job.part),
+        ]
+        _jobs[key] = job
+        threading.Thread(target=_run_job, args=(key, job, cmd), daemon=True).start()
+    return job.part, job
+
+
+def _read_growing(path: Path, job: _Job | None, start: int, length: int):
+    """Кусок файла [start, start+length): ждём, пока ffmpeg допишет нужное; не хватило — добиваем нулями."""
+    import time
+
+    sent = 0
+    f = None
+    idle = 0.0
+    try:
+        while sent < length:
+            if f is None:
+                for candidate in (path, job.final if job else path):
+                    try:
+                        f = open(candidate, "rb")  # noqa: SIM115
+                        break
+                    except FileNotFoundError:
+                        continue
+                if f is None:
+                    if job and not job.done.is_set() and idle < 120:
+                        time.sleep(0.05)
+                        idle += 0.05
+                        continue
+                    break
+            f.seek(start + sent)
+            chunk = f.read(min(256 * 1024, length - sent))
+            if chunk:
+                idle = 0.0
+                sent += len(chunk)
+                yield chunk
+                continue
+            if job is None or job.done.is_set():
+                # задача закончилась — дочитываем то, что успело записаться, и выходим
+                chunk = f.read(min(256 * 1024, length - sent))
+                if chunk:
+                    sent += len(chunk)
+                    yield chunk
+                    continue
+                break
+            if idle > 120:  # ffmpeg завис
+                break
+            time.sleep(0.05)
+            idle += 0.05
+    finally:
+        if f is not None:
+            f.close()
+    while sent < length:
+        pad = min(256 * 1024, length - sent)
+        sent += pad
+        yield b"\0" * pad
+
+
+def ranged_mp3_response(request: Request, path: Path, bitrate: int, duration: float) -> Response:
+    """Перекодированный MP3 с честной поддержкой Range (см. выше)."""
     bitrate = max(32, min(bitrate, 320))
-    bps = bitrate * 1000 // 8
-    total = max(int(duration * bps), 1)
+    total = max(int(duration * bitrate * 1000 // 8), 1)
+    file, job = _transcoded(path, bitrate)
     headers = {"Accept-Ranges": "bytes", "Cache-Control": "no-store"}
     range_header = request.headers.get("range")
     if not range_header:
-        return transcode_response(path, "mp3", bitrate, exact=total, headers={**headers, "Content-Length": str(total)})
-    rng = _parse_range(range_header, total)
-    if rng is None:
-        return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
-    start, end = rng
+        start, end, status = 0, total - 1, 200
+    else:
+        rng = _parse_range(range_header, total)
+        if rng is None:
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+        start, end = rng
+        status = 206
+        headers["Content-Range"] = f"bytes {start}-{end}/{total}"
     length = end - start + 1
-    headers.update({"Content-Range": f"bytes {start}-{end}/{total}", "Content-Length": str(length)})
-    return transcode_response(path, "mp3", bitrate, start / bps, exact=length, status_code=206, headers=headers)
+    headers["Content-Length"] = str(length)
+    return StreamingResponse(_read_growing(file, job, start, length), status_code=status, media_type="audio/mpeg", headers=headers)
 
 
 class _TranscodeResponse(StreamingResponse):
