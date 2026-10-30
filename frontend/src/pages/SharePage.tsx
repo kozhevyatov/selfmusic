@@ -132,14 +132,15 @@ function Shell({ children, colors }: { children: ReactNode; colors?: [string, st
   );
 }
 
+// Просто подпись: гостю по ссылке незачем уходить на сайт (там вход)
 function Brand({ name }: { name: string }) {
   return (
-    <a href="/" className="inline-flex items-center gap-2.5 text-sm font-bold text-muted hover:text-fg">
+    <div className="inline-flex items-center gap-2.5 text-sm font-bold text-muted select-none">
       <span className="inline-flex size-7 items-center justify-center rounded-[8px] bg-accent text-accent-fg">
         <BalalaikaMark className="size-[18px]" />
       </span>
       {name}
-    </a>
+    </div>
   );
 }
 
