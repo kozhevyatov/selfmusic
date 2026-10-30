@@ -10,6 +10,7 @@ import {
   ensureGraph,
   getAudioSettings,
   hasGraph,
+  isIOS,
   needsGraph,
   normalizeGain,
   onAudioSettings,
@@ -452,7 +453,10 @@ class Player {
     const cf = Math.min(this.crossfadeFor(cur, nxt), a.duration / 3);
     // «Без пауз»: следующий трек заранее загружен на второй деке, и по окончании текущего
     // переключение занимает ~10 мс (замерено) — на слух слитно. Без этого — обычная загрузка.
-    if ((cf > 0 || getAudioSettings().gapless) && rem < cf + PRELOAD_AHEAD) this.preload(ni);
+    // На iPhone вторую деку заранее не грузим: Safari, начав грузить второй <audio>, сбивает первый —
+    // он начинает трек заново, хотя время идёт дальше. Там следующий трек грузится по окончании текущего.
+    const gapless = getAudioSettings().gapless && !isIOS;
+    if ((cf > 0 || gapless) && rem < cf + PRELOAD_AHEAD) this.preload(ni);
     if (cf > 0 && rem <= cf) this.beginTransition(ni, rem);
   }
 

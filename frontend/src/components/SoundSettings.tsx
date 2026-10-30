@@ -184,7 +184,7 @@ export function SoundSettingsCard({ onOpenEq }: { onOpenEq: () => void }) {
         )}
       </Row>
       )}
-      {!isNative && (
+      {!isNative && !isIOS && (
       <Row
         title="Без пауз между треками"
         text="Следующий трек заранее загружается и начинается сразу — концертные альбомы звучат слитно."
