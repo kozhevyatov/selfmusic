@@ -52,22 +52,22 @@ export default function ArtistPage() {
         </div>
       </header>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           aria-label="Слушать всё"
           onClick={() => playArtist(a.id)}
-          className="flex size-16 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105"
+          className="flex size-16 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105"
         >
           <PlayFill className="ml-1 size-7" />
         </button>
-        <button aria-label="Перемешать" onClick={() => playArtist(a.id, true)} className="flex size-12 items-center justify-center rounded-full border hover:bg-surface-2">
+        <button aria-label="Перемешать" onClick={() => playArtist(a.id, true)} className="flex size-12 shrink-0 items-center justify-center rounded-full border hover:bg-surface-2">
           <Shuffle className="size-5" />
         </button>
         <button
           aria-label={a.starred ? "Убрать из избранного" : "В избранное"}
           aria-pressed={a.starred}
           onClick={() => setFavorite("artist", a.id, !a.starred)}
-          className={cn("flex size-12 items-center justify-center rounded-full border hover:bg-surface-2", a.starred && "text-accent-ink")}
+          className={cn("flex size-12 shrink-0 items-center justify-center rounded-full border hover:bg-surface-2", a.starred && "text-accent-ink")}
         >
           {a.starred ? <HeartFill className="size-5" /> : <Heart className="size-5" />}
         </button>

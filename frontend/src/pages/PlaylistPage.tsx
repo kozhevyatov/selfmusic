@@ -96,12 +96,12 @@ export default function PlaylistPage() {
         </div>
       </header>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           aria-label="Слушать плейлист"
           disabled={!pl.tracks.length}
           onClick={() => player.play(pl.tracks, 0, { shuffle: false })}
-          className="flex size-16 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105 disabled:opacity-40"
+          className="flex size-16 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105 disabled:opacity-40"
         >
           <PlayFill className="ml-1 size-7" />
         </button>
@@ -109,7 +109,7 @@ export default function PlaylistPage() {
           aria-label="Перемешать"
           disabled={!pl.tracks.length}
           onClick={() => player.play(pl.tracks, 0, { shuffle: true })}
-          className="flex size-12 items-center justify-center rounded-full border hover:bg-surface-2 disabled:opacity-40"
+          className="flex size-12 shrink-0 items-center justify-center rounded-full border hover:bg-surface-2 disabled:opacity-40"
         >
           <Shuffle className="size-5" />
         </button>
@@ -153,7 +153,7 @@ export default function PlaylistPage() {
               : []),
           ]}
           trigger={(p) => (
-            <button {...p} aria-label="Ещё" className="flex size-12 items-center justify-center rounded-full border hover:bg-surface-2">
+            <button {...p} aria-label="Ещё" className="flex size-12 shrink-0 items-center justify-center rounded-full border hover:bg-surface-2">
               <Ellipsis className="size-5" />
             </button>
           )}

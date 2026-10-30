@@ -1,5 +1,5 @@
 import { isNative } from "@/lib/native";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, coverUrl } from "@/lib/api";
 import { setFavorite } from "@/lib/actions";
 import { usePalette } from "@/lib/colors";
@@ -564,7 +564,94 @@ function BookmarkButton() {
 
 // ---------- полноэкранный плеер ----------
 
+/**
+ * Свернуть полноэкранный плеер смахиванием вниз (как шторку в iOS/Android).
+ * Не мешает ползункам (перемотка, громкость) и прокрутке очереди/текста: из прокрученного списка
+ * жест работает только когда список уже наверху.
+ */
+function useSwipeDown(onClose: () => void) {
+  const close = useRef(onClose);
+  close.current = onClose;
+  const cleanup = useRef<(() => void) | null>(null);
+  return useCallback((el: HTMLDivElement | null) => {
+    cleanup.current?.();
+    cleanup.current = null;
+    if (!el) return;
+    let startX = 0;
+    let startY = 0;
+    let t0 = 0;
+    let dy = 0;
+    let active = false;
+    let decided = false;
+    const blocked = (target: EventTarget | null) => {
+      for (let n = target as HTMLElement | null; n && n !== el; n = n.parentElement) {
+        if (n.matches('input, textarea, select, [role="slider"], [data-no-swipe]')) return true;
+        if (n.scrollTop > 0 && n.scrollHeight > n.clientHeight) return true; // список прокручен — сначала он
+      }
+      return false;
+    };
+    const reset = (animate: boolean) => {
+      el.style.transition = animate ? "transform 0.25s ease" : "";
+      el.style.transform = "";
+    };
+    const onStart = (e: TouchEvent) => {
+      active = e.touches.length === 1 && !blocked(e.target);
+      decided = false;
+      dy = 0;
+      if (!active) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      t0 = performance.now();
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!active) return;
+      const ddy = e.touches[0].clientY - startY;
+      const ddx = e.touches[0].clientX - startX;
+      if (!decided) {
+        if (Math.abs(ddy) < 8 && Math.abs(ddx) < 8) return;
+        decided = true;
+        // вверх или вбок — это не наш жест (прокрутка, листание)
+        if (ddy <= 0 || Math.abs(ddx) > Math.abs(ddy)) {
+          active = false;
+          return;
+        }
+      }
+      dy = Math.max(0, ddy);
+      el.style.animation = "none"; // анимация появления (fill: both) иначе перекрывает transform
+      el.style.transition = "none";
+      el.style.transform = `translateY(${dy}px)`;
+      if (e.cancelable) e.preventDefault();
+    };
+    const onEnd = () => {
+      if (!active || !decided) {
+        active = false;
+        return;
+      }
+      active = false;
+      const speed = dy / Math.max(1, performance.now() - t0); // px/мс
+      if (dy > Math.min(160, el.clientHeight * 0.22) || (dy > 40 && speed > 0.6)) {
+        el.style.transition = "transform 0.2s ease-in";
+        el.style.transform = "translateY(100%)";
+        window.setTimeout(() => close.current(), 180);
+      } else reset(true);
+    };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd);
+    el.addEventListener("touchcancel", () => {
+      active = false;
+      reset(true);
+    });
+    cleanup.current = () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+    };
+  }, []);
+}
+
 export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const swipeRef = useSwipeDown(onClose);
   const track = useCurrentTrack();
   const book = usePlayer((s) => s.book);
   usePlayer((s) => Math.floor(s.time)); // название текущей главы
@@ -628,6 +715,7 @@ export function NowPlaying({ open, onClose }: { open: boolean; onClose: () => vo
 
   return (
     <div
+      ref={swipeRef}
       role="dialog"
       aria-modal="true"
       aria-label="Сейчас играет"

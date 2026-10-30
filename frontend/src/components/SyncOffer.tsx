@@ -51,7 +51,7 @@ export function UpdateCard() {
   return (
     <div
       role="status"
-      className="glass animate-sheet-up fixed inset-x-2 top-[calc(var(--sat)+64px)] z-40 mx-auto flex max-w-md items-center gap-3 rounded-2xl border p-2.5 pl-4 shadow-2xl shadow-black/40 lg:top-4"
+      className="glass animate-sheet-up fixed inset-x-2 top-[calc(var(--sat)+72px)] z-40 mx-auto flex max-w-md items-center gap-3 rounded-2xl border p-2.5 pl-4 shadow-2xl shadow-black/40 lg:top-4"
     >
       <RefreshCw className="size-5 shrink-0 text-accent-ink" />
       <div className="min-w-0 flex-1 text-[14px] font-semibold">Вышла новая версия SelfMusic</div>

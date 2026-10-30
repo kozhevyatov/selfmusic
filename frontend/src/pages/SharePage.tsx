@@ -335,14 +335,14 @@ function ShareView({ token, data }: { token: string; data: Opened }) {
             aria-label={p.playing ? "Пауза" : "Слушать"}
             onClick={p.toggle}
             disabled={!data.tracks.length}
-            className="flex size-16 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105 disabled:opacity-40"
+            className="flex size-16 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105 disabled:opacity-40"
           >
             {p.playing ? <PauseFill className="size-7" /> : <PlayFill className="ml-1 size-7" />}
           </button>
           <button
             aria-label="Перемешать"
             onClick={() => p.playAt(0, shuffled(data.tracks))}
-            className="flex size-12 items-center justify-center rounded-full border hover:bg-surface-2"
+            className="flex size-12 shrink-0 items-center justify-center rounded-full border hover:bg-surface-2"
           >
             <Shuffle className="size-5" />
           </button>

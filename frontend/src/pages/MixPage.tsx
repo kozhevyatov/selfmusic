@@ -92,7 +92,7 @@ export default function MixPage() {
           aria-label="Слушать"
           disabled={!m.tracks.length}
           onClick={() => player.play(m.tracks, 0, { shuffle: false })}
-          className="flex size-16 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105 disabled:opacity-50"
+          className="flex size-16 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105 disabled:opacity-50"
         >
           <PlayFill className="ml-1 size-7" />
         </button>
@@ -100,7 +100,7 @@ export default function MixPage() {
           aria-label="Перемешать"
           disabled={!m.tracks.length}
           onClick={() => player.play(m.tracks, 0, { shuffle: true })}
-          className="flex size-12 items-center justify-center rounded-full border text-muted transition hover:bg-surface-2 hover:text-fg"
+          className="flex size-12 shrink-0 items-center justify-center rounded-full border text-muted transition hover:bg-surface-2 hover:text-fg"
         >
           <Shuffle className="size-5" />
         </button>

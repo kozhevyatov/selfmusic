@@ -70,14 +70,14 @@ export default function AlbumPage() {
         <button
           aria-label="Слушать альбом"
           onClick={() => player.play(a.tracks, 0, { shuffle: false })}
-          className="flex size-16 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105 active:scale-95"
+          className="flex size-16 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg shadow-xl shadow-black/25 transition hover:scale-105 active:scale-95"
         >
           <PlayFill className="ml-1 size-7" />
         </button>
         <button
           aria-label="Перемешать"
           onClick={() => player.play(a.tracks, 0, { shuffle: true })}
-          className="flex size-12 items-center justify-center rounded-full border text-fg hover:bg-surface-2"
+          className="flex size-12 shrink-0 items-center justify-center rounded-full border text-fg hover:bg-surface-2"
         >
           <Shuffle className="size-5" />
         </button>
@@ -85,7 +85,7 @@ export default function AlbumPage() {
           aria-label={a.starred ? "Убрать из избранного" : "В избранное"}
           aria-pressed={a.starred}
           onClick={() => setFavorite("album", a.id, !a.starred)}
-          className={cn("flex size-12 items-center justify-center rounded-full border hover:bg-surface-2", a.starred ? "text-accent-ink" : "text-fg")}
+          className={cn("flex size-12 shrink-0 items-center justify-center rounded-full border hover:bg-surface-2", a.starred ? "text-accent-ink" : "text-fg")}
         >
           {a.starred ? <HeartFill className="size-5" /> : <Heart className="size-5" />}
         </button>
@@ -141,7 +141,7 @@ export default function AlbumPage() {
             },
           ]}
           trigger={(p) => (
-            <button {...p} aria-label="Ещё" className="flex size-12 items-center justify-center rounded-full border hover:bg-surface-2">
+            <button {...p} aria-label="Ещё" className="flex size-12 shrink-0 items-center justify-center rounded-full border hover:bg-surface-2">
               <Ellipsis className="size-5" />
             </button>
           )}

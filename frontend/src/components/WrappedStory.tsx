@@ -419,7 +419,7 @@ export function WrappedStory({ data, onClose }: { data: StatsResult; onClose: ()
           go(e.clientX - rect.left < rect.width * 0.3 ? -1 : 1);
         }}
       >
-        <div className="flex gap-1 px-3 pt-[max(0.75rem,var(--sat))]">
+        <div className="flex gap-1 px-3 pt-[max(0.75rem,calc(var(--sat)+0.5rem))]">
           {slides.map((s, i) => (
             <div key={s.key} className="h-[3px] flex-1 overflow-hidden rounded-full bg-white/25">
               <div className="h-full bg-white" style={{ width: `${i < index ? 100 : i === index ? progress * 100 : 0}%` }} />

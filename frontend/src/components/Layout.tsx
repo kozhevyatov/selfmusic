@@ -221,7 +221,7 @@ function Sidebar() {
 function MobileHeader() {
   const settings = useQuery(["settings"], api.settings.get, { staleTime: 300_000 });
   return (
-    <header className="glass sticky top-0 z-30 flex items-center justify-between gap-3 border-b px-4 pt-[max(0.6rem,var(--sat))] pb-2.5 lg:hidden">
+    <header className="glass sticky top-0 z-30 flex items-center justify-between gap-3 border-b px-4 pt-[max(0.6rem,calc(var(--sat)+0.5rem))] pb-2.5 lg:hidden">
       <Link to="/" className="flex items-center gap-2.5" aria-label="На главную">
         <span className="inline-flex size-8 items-center justify-center rounded-[9px] bg-accent text-accent-fg">
           <BalalaikaMark className="size-5" />
