@@ -130,7 +130,12 @@ function snapshot() {
 
 async function push(keepalive = false) {
   window.clearTimeout(pushTimer);
-  if (!ready || isOffline()) return;
+  if (isOffline()) return;
+  if (!ready) {
+    // ещё не сверились с сервером — не теряем запись (особенно нажатие «играть»), повторим чуть позже
+    schedulePush(1000);
+    return;
+  }
   const data = snapshot();
   if (!data) return;
   lastPushAt = Date.now();
@@ -174,6 +179,13 @@ function onPlayerChange() {
   lastTrack = cur?.id ?? 0;
   if (suppressPush) {
     lastSig = sig;
+    // «играть» нажали сразу после того, как подхватили очередь с другого устройства:
+    // это всё равно старт здесь — его надо записать, иначе это устройство «проиграет» спор и встанет на паузу
+    if (startedNow) {
+      startPending = true;
+      dirty = true;
+      schedulePush(2100);
+    }
     return;
   }
   if (startedNow) startPending = true;
@@ -234,7 +246,12 @@ async function handleRemote(r: Remote) {
   const cur = s.queue[s.index];
 
   if (s.playing) {
-    // уступаем, только если «играть» там нажали позже, чем здесь
+    // здесь только что нажали «играть», а записать ещё не успели — главные мы, а не они
+    if (startPending) {
+      schedulePush(0);
+      return;
+    }
+    // уступаем, только если там действительно играет и «играть» там нажали позже, чем здесь
     const theirs = r.playing && r.started_at ? Date.parse(r.started_at) : 0;
     const mine = myStartedAt ? Date.parse(myStartedAt) : 0;
     if (theirs && theirs > mine) await giveWay(r);

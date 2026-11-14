@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -27,10 +27,20 @@ from ..serialize import tracks_out
 router = APIRouter(prefix="/api/queue", tags=["queue"])
 
 MAX_TRACKS = 1000
+# Играющее устройство пишет позицию раз в 15 с. Если записей нет дольше —
+# считаем, что там уже не играет (вкладку закрыли, приложение выгрузили, телефон уснул):
+# иначе «играет на другом устройстве» висит вечно и не даёт слушать здесь.
+LIVE_FOR = timedelta(seconds=45)
 
 
 def _aware(dt: datetime | None) -> datetime | None:
     return dt.replace(tzinfo=timezone.utc) if dt and dt.tzinfo is None else dt
+
+
+def _live(pq: PlayQueue) -> bool:
+    """Играет ли там сейчас на самом деле (а не «осталось playing=true» от закрытого устройства)."""
+    changed = _aware(pq.changed_at)
+    return bool(pq.playing) and changed is not None and datetime.now(timezone.utc) - changed < LIVE_FOR
 
 
 def _state(db: Session, user: User, pq: PlayQueue, full: bool) -> dict:
@@ -43,7 +53,7 @@ def _state(db: Session, user: User, pq: PlayQueue, full: bool) -> dict:
         "started_at": _aware(pq.started_at),
         "device_id": pq.device_id or "",
         "device_name": pq.changed_by or "другое устройство",
-        "playing": bool(pq.playing),
+        "playing": _live(pq),
         "current_id": pq.current_id,
         "position": round((pq.position_ms or 0) / 1000, 2),
         "count": len(ids),
@@ -82,7 +92,7 @@ class QueueIn(BaseModel):
 @router.put("")
 def save_queue(data: QueueIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
     pq = db.get(PlayQueue, user.id, with_for_update=True)
-    if pq and pq.device_id and pq.device_id != data.device_id and pq.playing and not data.started:
+    if pq and pq.device_id and pq.device_id != data.device_id and _live(pq) and not data.started:
         other = _aware(pq.started_at)
         mine = _aware(data.since)
         if other and (mine is None or other > mine):
