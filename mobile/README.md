@@ -16,7 +16,7 @@
 ## Сборка (на Mac)
 
 ```bash
-cd ~/www/selfmusic/mobile
+cd selfmusic/mobile
 npm install
 npx expo install --fix                                   # версии библиотек под Expo SDK 58
 npx eas-cli@latest build -p android --profile production # APK для установки и для сайта

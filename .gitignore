@@ -22,3 +22,6 @@ frontend/dist/
 .vscode/
 *.log
 docker-compose.override.yml
+
+# локальная инструкция по развёртыванию (ссылки на свой сервер) — не публикуется
+README.local.md

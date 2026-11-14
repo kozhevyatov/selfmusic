@@ -1,0 +1,46 @@
+# SelfMusic + собственная MariaDB в одном docker-compose.
+#
+#   docker compose -f docker-compose.full.yml up -d --build
+#
+# Перед запуском поменяйте пароли (лучше вынести их в .env рядом с файлом:
+#   DB_PASSWORD=...   DB_ROOT_PASSWORD=...).
+
+services:
+  db:
+    image: mariadb:11
+    container_name: selfmusic-db
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Moscow
+      MARIADB_DATABASE: selfmusic
+      MARIADB_USER: selfmusic
+      MARIADB_PASSWORD: ${DB_PASSWORD:-change-me}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-change-me-root}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - ./mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  selfmusic:
+    build: https://github.com/kozhevyatov/selfmusic.git#main   # или: build: ..
+    image: selfmusic:latest
+    container_name: selfmusic
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "1332:1332"
+    environment:
+      TZ: Europe/Moscow
+      DATABASE_URL: "mysql+pymysql://selfmusic:${DB_PASSWORD:-change-me}@db:3306/selfmusic?charset=utf8mb4"
+      # SETUP_TOKEN: "длинная-случайная-строка"
+    volumes:
+      - ./data:/data              # конфиг, ключ, аватары, кэш
+      - ./media:/uploads          # личные папки пользователей
+      - /path/to/music:/music/music:ro
+      # - /path/to/audiobooks:/music/books:ro

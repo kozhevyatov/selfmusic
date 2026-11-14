@@ -1,0 +1,40 @@
+# SelfMusic + уже работающая MariaDB/MySQL на сервере (в другом контейнере).
+#
+# 1. Создайте базу и пользователя в существующей MariaDB:
+#      CREATE DATABASE selfmusic CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+#      CREATE USER 'selfmusic'@'%' IDENTIFIED BY 'надёжный-пароль';
+#      GRANT ALL PRIVILEGES ON selfmusic.* TO 'selfmusic'@'%';
+#      FLUSH PRIVILEGES;
+# 2. Узнайте Docker-сеть контейнера с базой:  docker inspect <контейнер-бд> -f '{{json .NetworkSettings.Networks}}'
+#    Если общей сети нет — создайте и подключите к ней базу:
+#      docker network create db && docker network connect db <контейнер-бд>
+# 3. Укажите ниже имя сети, хост (имя контейнера с базой) и пароль, затем:
+#      docker compose -f docker-compose.external-db.yml up -d --build
+
+services:
+  selfmusic:
+    build: https://github.com/kozhevyatov/selfmusic.git#main   # или: build: ..
+    image: selfmusic:latest
+    container_name: selfmusic
+    restart: unless-stopped
+    ports:
+      - "1332:1332"
+    environment:
+      TZ: Europe/Moscow
+      # С DATABASE_URL шаг выбора базы в мастере пропускается.
+      # Хост — имя контейнера с MariaDB в общей сети (здесь — mariadb).
+      DATABASE_URL: "mysql+pymysql://selfmusic:надёжный-пароль@mariadb:3306/selfmusic?charset=utf8mb4"
+      # SETUP_TOKEN: "длинная-случайная-строка"
+    volumes:
+      - ./data:/data              # конфиг, ключ, аватары, кэш
+      - ./media:/uploads          # личные папки пользователей
+      - /path/to/music:/music/music:ro
+      # - /path/to/audiobooks:/music/books:ro
+    networks:
+      - default
+      - db
+
+networks:
+  db:
+    external: true
+    name: db                      # имя существующей сети, в которой живёт база

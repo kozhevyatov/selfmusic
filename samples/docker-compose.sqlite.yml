@@ -1,0 +1,29 @@
+# SelfMusic + SQLite — самый простой вариант, база — файл data/selfmusic.db.
+#
+#   docker compose -f docker-compose.sqlite.yml up -d --build
+#
+# Затем откройте http://<сервер>:1332 и в мастере выберите SQLite.
+
+services:
+  selfmusic:
+    # Сборка прямо из GitHub — клонировать репозиторий не нужно.
+    # Если репозиторий уже склонирован, замените на: build: ..   (путь к папке с Dockerfile)
+    build: https://github.com/kozhevyatov/selfmusic.git#main
+    image: selfmusic:latest
+    container_name: selfmusic
+    restart: unless-stopped
+    ports:
+      - "1332:1332"
+    environment:
+      TZ: Europe/Moscow
+      # Мастер первого запуска без токена открывается только из локальной сети.
+      # SETUP_TOKEN: "длинная-случайная-строка"
+    volumes:
+      - ./data:/data              # конфиг, ключ, аватары, кэш и база SQLite
+      - ./media:/uploads          # личные папки пользователей (загрузки)
+      # Папки с музыкой — всё, что внутри /music, видно в мастере и в админке.
+      # :ro — только чтение; уберите, если нужны загрузка и редактор тегов в этой папке.
+      - /path/to/music:/music/music:ro
+      # - /path/to/audiobooks:/music/books:ro
+    # Чтобы загруженные файлы принадлежали вашему пользователю, а не root (узнать: id <имя>):
+    # user: "1000:1000"
