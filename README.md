@@ -133,6 +133,29 @@ docker compose up -d --build
 
 > Без токена мастер первого запуска открывается только из локальной сети. Если настраиваете сервер через интернет, задайте `SETUP_TOKEN` в `.env` — мастер его спросит.
 
+### Готовый образ (Synology Container Manager и без сборки)
+
+Образ собирается автоматически при каждом обновлении и лежит в GitHub Container Registry — собирать ничего не нужно.
+Это же решает ошибку Container Manager `unable to find 'git'` при `build:` со ссылкой на GitHub.
+
+```yaml
+services:
+  selfmusic:
+    image: ghcr.io/kozhevyatov/selfmusic:latest
+    container_name: selfmusic
+    restart: unless-stopped
+    ports:
+      - "1332:1332"
+    environment:
+      TZ: Europe/Moscow
+    volumes:
+      - ./data:/data
+      - ./media:/uploads
+      - /volume1/music:/music/music:ro
+```
+
+Обновление: `docker compose pull && docker compose up -d`.
+
 ## Папки с музыкой
 
 Контейнер видит только то, что смонтировано в `docker-compose.yml`. Удобнее всего задать пути в `.env` рядом с ним:
