@@ -1,6 +1,6 @@
 # SelfMusic + собственная MariaDB в одном docker-compose.
 #
-#   docker compose -f docker-compose.full.yml up -d --build
+#   docker compose -f docker-compose.full.yml up -d
 #
 # Перед запуском поменяйте пароли (лучше вынести их в .env рядом с файлом:
 #   DB_PASSWORD=...   DB_ROOT_PASSWORD=...).
@@ -26,8 +26,7 @@ services:
       retries: 10
 
   selfmusic:
-    build: https://github.com/kozhevyatov/selfmusic.git#main   # или: build: ..
-    image: selfmusic:latest
+    image: ghcr.io/kozhevyatov/selfmusic:latest   # или собрать из клона: build: ..
     container_name: selfmusic
     restart: unless-stopped
     depends_on:

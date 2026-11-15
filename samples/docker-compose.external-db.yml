@@ -9,12 +9,11 @@
 #    Если общей сети нет — создайте и подключите к ней базу:
 #      docker network create db && docker network connect db <контейнер-бд>
 # 3. Укажите ниже имя сети, хост (имя контейнера с базой) и пароль, затем:
-#      docker compose -f docker-compose.external-db.yml up -d --build
+#      docker compose -f docker-compose.external-db.yml up -d
 
 services:
   selfmusic:
-    build: https://github.com/kozhevyatov/selfmusic.git#main   # или: build: ..
-    image: selfmusic:latest
+    image: ghcr.io/kozhevyatov/selfmusic:latest   # или собрать из клона: build: ..
     container_name: selfmusic
     restart: unless-stopped
     ports:
