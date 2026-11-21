@@ -152,8 +152,17 @@ export function patchEverywhere(fn: (data: unknown) => unknown) {
   }
 }
 
+/** Общие для всех данные (не зависят от пользователя) — при выходе из аккаунта их не стираем. */
+const PUBLIC_KEYS = new Set([keyOf(["setup-status"]), keyOf(["settings"])]);
+
+/**
+ * Забыть данные пользователя (выход из аккаунта).
+ * Статус сервера и общие настройки оставляем: от статуса зависит, что показывает App, и если его стереть,
+ * App остаётся на заставке — заново этот запрос никто не делает (useQuery запрашивает только при монтировании).
+ */
 export function clearCache() {
-  for (const e of cache.values()) {
+  for (const [k, e] of cache) {
+    if (PUBLIC_KEYS.has(k)) continue;
     e.data = undefined;
     e.stale = true;
     publish(e);
