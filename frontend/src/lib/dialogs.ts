@@ -6,6 +6,8 @@ export type DialogState =
   | { kind: "playlist"; tracks: Track[] }
   | { kind: "tags"; trackId: number }
   | { kind: "album-tags"; albumId: number }
+  | { kind: "album-meta"; albumId: number }
+  | { kind: "artist-meta"; artistId: number }
   | { kind: "share"; target?: ShareTarget; share?: Share }
   | { kind: "confirm"; title: string; text: string; action: string; danger?: boolean; resolve: (ok: boolean) => void };
 
@@ -21,6 +23,8 @@ export const dialogs = {
   addToPlaylist: (tracks: Track[]) => set({ kind: "playlist", tracks }),
   editTags: (trackId: number) => set({ kind: "tags", trackId }),
   editAlbum: (albumId: number) => set({ kind: "album-tags", albumId }),
+  albumMeta: (albumId: number) => set({ kind: "album-meta", albumId }),
+  artistMeta: (artistId: number) => set({ kind: "artist-meta", artistId }),
   share: (target: ShareTarget) => set({ kind: "share", target }),
   editShare: (share: Share) => set({ kind: "share", share }),
   confirm: (opts: { title: string; text: string; action: string; danger?: boolean }) =>

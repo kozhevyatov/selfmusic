@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 from sqlalchemy.orm import Session
 
-from .config import CACHE_DIR, COVER_CACHE, settings
+from .config import CACHE_DIR, COVER_CACHE, META_DIR, settings
 from .models import Album, Library, Track
 from .tags import embedded_cover
 
@@ -90,11 +90,17 @@ def track_file(db: Session, track: Track) -> Path:
 def _original_cover(db: Session, album: Album) -> bytes | None:
     if not album.cover:
         return None
+    kind, _, ref = album.cover.partition(":")
+    if kind == "meta":  # найдена в Cover Art Archive (app/metadata.py)
+        path = META_DIR / "covers" / os.path.basename(ref)
+        try:
+            return path.read_bytes() if path.is_file() else None
+        except OSError as exc:
+            raise _CoverReadError from exc
     lib = db.get(Library, album.library_id)
     if lib is None:
         return None
     root = Path(lib.path).resolve()
-    kind, _, ref = album.cover.partition(":")
     try:
         if kind == "file":
             path = (root / ref).resolve()
@@ -587,3 +593,5 @@ def download_name(track: Track) -> str:
 
 def ensure_dirs() -> None:
     os.makedirs(COVER_CACHE, exist_ok=True)
+    os.makedirs(META_DIR / "covers", exist_ok=True)
+    os.makedirs(META_DIR / "artists", exist_ok=True)

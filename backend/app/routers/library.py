@@ -17,7 +17,8 @@ from ..stats import favorite_artists
 from ..access import allowed_library_ids, can_edit_track, can_write
 from ..db import get_db
 from ..media import cover_path, download_name, file_response, image_response, content_type, stream_track, track_file
-from ..models import Album, Artist, Library, Play, Playlist, PlaylistEntry, PlaylistMember, Star, Track, Upload, User
+from ..metadata import FOUND, artist_image_url, artist_images
+from ..models import Album, AlbumMeta, Artist, ArtistMeta, Library, Play, Playlist, PlaylistEntry, PlaylistMember, Star, Track, Upload, User
 from ..queries import (
     album_list_query,
     album_tracks,
@@ -29,6 +30,7 @@ from ..queries import (
 )
 from ..schemas import PlayIn, PlaylistCreate, PlaylistReorder, PlaylistTracks, PlaylistUpdate
 from ..security import get_current_user, get_media_user
+from .meta import artist_info_out
 from ..serialize import album_out, albums_out, artist_out, cover_url, starred_ids, track_out, tracks_out
 
 router = APIRouter(prefix="/api", tags=["library"])
@@ -64,8 +66,9 @@ def _artist_cards(db: Session, user: User, rows: list[tuple]) -> list[dict]:
         return []
     cover_albums = {a.id: a for a in db.scalars(select(Album).where(Album.id.in_([r[2] for r in rows if r[2]])))}
     starred = starred_ids(db, user.id, "artist", (r[0].id for r in rows))
+    photos = artist_images(db, (r[0].id for r in rows))  # фото из Викисклада главнее обложки альбома
     return [
-        artist_out(artist, count, cover_url(cover_albums.get(cover_id)), artist.id in starred)
+        artist_out(artist, count, photos.get(artist.id) or cover_url(cover_albums.get(cover_id)), artist.id in starred)
         for artist, count, cover_id in rows
     ]
 
@@ -337,6 +340,13 @@ def get_album(album_id: int, db: Session = Depends(get_db), user: User = Depends
     data["can_edit"] = bool(tracks) and can_edit_track(db, user, lib, tracks[0].path)
     data["more_by_artist"] = albums_out(db, user.id, more)
     data["library_name"] = lib.name if lib else ""
+    meta = db.get(AlbumMeta, album.id)
+    found = meta is not None and meta.status in FOUND
+    data["mb"] = {
+        "release_mbid": meta.release_mbid if found else None,
+        "status": (meta.status if meta else "pending") if user.is_admin else None,
+        "cover_from_meta": bool(album.cover and album.cover.startswith("meta:")),
+    }
     return data
 
 
@@ -377,8 +387,12 @@ def get_artist(artist_id: int, db: Session = Depends(get_db), user: User = Depen
         )
     )
     cover_album = next((a for a in albums if a.cover), None) or next((a for a in appears if a.cover), None)
+    meta = db.get(ArtistMeta, artist.id)
+    photo = artist_image_url(meta)
     return {
-        **artist_out(artist, len(albums), cover_url(cover_album), bool(starred_ids(db, user.id, "artist", [artist.id]))),
+        **artist_out(artist, len(albums), photo or cover_url(cover_album), bool(starred_ids(db, user.id, "artist", [artist.id]))),
+        "info": artist_info_out(meta),
+        "meta_status": (meta.status if meta else "pending") if user.is_admin else None,
         "albums": albums_out(db, user.id, albums),
         "appears_on": albums_out(db, user.id, appears),
         "top_tracks": tracks_out(db, user.id, top),

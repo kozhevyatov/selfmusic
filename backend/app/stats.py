@@ -84,12 +84,15 @@ def artist_cards(db: Session, counted: list[tuple[int, int, float]], lib_ids: li
     ids = [a for a, _, _ in counted]
     artists = {a.id: a for a in db.scalars(select(Artist).where(Artist.id.in_(ids or [-1])))}
     covers = _artist_covers(db, ids, lib_ids)
+    from .metadata import artist_images  # noqa: PLC0415
+
+    photos = artist_images(db, ids)
     out = []
     for aid, plays, secs in counted:
         a = artists.get(aid)
         if a is None:
             continue
-        out.append({**artist_out(a, 0, cover_url(covers.get(aid))), "plays": plays, "seconds": int(secs)})
+        out.append({**artist_out(a, 0, photos.get(aid) or cover_url(covers.get(aid))), "plays": plays, "seconds": int(secs)})
     return out
 
 

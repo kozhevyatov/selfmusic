@@ -1,19 +1,63 @@
 import { AlbumCard, CardGrid } from "@/components/Cards";
 import { Avatar, Cover } from "@/components/Cover";
 import { HeartFill, PlayFill } from "@/components/icon";
-import { Heart, Link as LinkIcon, Radio, Shuffle } from "@/components/icons";
-import { useCanShare } from "@/lib/auth";
+import { useState } from "react";
+import { Disc3, ExternalLink, Heart, Link as LinkIcon, Radio, Shuffle } from "@/components/icons";
+import { useAuth, useCanShare } from "@/lib/auth";
 import { dialogs } from "@/lib/dialogs";
 import { Section } from "@/components/Section";
 import { TrackList } from "@/components/TrackList";
 import { ErrorBox, PageLoader } from "@/components/ui/misc";
-import { api, coverUrl } from "@/lib/api";
+import { api, coverUrl, type ArtistInfo } from "@/lib/api";
 import { playArtist, setFavorite, startRadio } from "@/lib/actions";
 import { usePalette } from "@/lib/colors";
 import { albumsLabel, tracksLabel } from "@/lib/format";
 import { useQuery } from "@/lib/query";
 import { useParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
+
+const LANG_NAME: Record<string, string> = { ru: "русской", en: "английской", uk: "украинской", be: "белорусской", de: "немецкой", fr: "французской" };
+
+/** «Об исполнителе»: биография из Википедии (свёрнута до нескольких строк), годы, страна, жанры. */
+function About({ info }: { info: ArtistInfo }) {
+  const [open, setOpen] = useState(false);
+  const long = info.bio.length > 420;
+  const facts = [info.life_span, info.country, info.genres].filter(Boolean);
+  return (
+    <Section title="Об исполнителе">
+      <div className="flex max-w-3xl flex-col gap-3">
+        {facts.length > 0 && <div className="text-sm text-muted">{facts.join(" · ")}</div>}
+        {info.bio && (
+          <div className="relative">
+            <p className={cn("text-[15px] leading-relaxed whitespace-pre-line", !open && long && "line-clamp-5")}>{info.bio}</p>
+            {long && (
+              <button onClick={() => setOpen(!open)} className="mt-1 text-sm font-bold text-accent-ink hover:underline">
+                {open ? "Свернуть" : "Читать дальше"}
+              </button>
+            )}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-faint">
+          {info.bio_url && (
+            <a href={info.bio_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-fg hover:underline">
+              Википедия{LANG_NAME[info.bio_lang] && info.bio_lang !== "ru" ? ` (на ${LANG_NAME[info.bio_lang]})` : ""} <ExternalLink className="size-3" />
+            </a>
+          )}
+          {info.mbid && (
+            <a href={`https://musicbrainz.org/artist/${info.mbid}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-fg hover:underline">
+              MusicBrainz <ExternalLink className="size-3" />
+            </a>
+          )}
+          {info.image_source && (
+            <a href={info.image_source} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-fg hover:underline">
+              Фото: Викисклад <ExternalLink className="size-3" />
+            </a>
+          )}
+        </div>
+      </div>
+    </Section>
+  );
+}
 
 export default function ArtistPage() {
   const { id } = useParams<{ id: string }>();
@@ -22,6 +66,7 @@ export default function ArtistPage() {
   const a = q.data;
   const palette = usePalette(coverUrl(a?.cover, 96), a?.name ?? "");
   const canShare = useCanShare();
+  const isAdmin = Boolean(useAuth().user?.is_admin);
 
   if (q.isLoading) return <PageLoader />;
   if (q.error || !a) return <ErrorBox error={q.error} />;
@@ -47,6 +92,7 @@ export default function ArtistPage() {
             <h1 className="title-display mt-2 text-4xl break-words sm:text-6xl">{a.name}</h1>
             <p className="mt-3 text-muted">
               {albumsLabel(a.albums.length)} · {tracksLabel(a.track_count)}
+              {a.info?.genres && <span className="hidden sm:inline"> · {a.info.genres}</span>}
             </p>
           </div>
         </div>
@@ -85,6 +131,15 @@ export default function ArtistPage() {
             <LinkIcon className="size-[18px]" /> Поделиться
           </button>
         )}
+        {isAdmin && (
+          <button
+            onClick={() => dialogs.artistMeta(a.id)}
+            title="Исполнитель в MusicBrainz: биография и фото"
+            className="flex h-12 items-center gap-2 rounded-full border px-5 text-sm font-bold text-muted hover:bg-surface-2 hover:text-fg"
+          >
+            <Disc3 className="size-[18px]" /> MusicBrainz
+          </button>
+        )}
       </div>
 
       {a.top_tracks.length > 0 && (
@@ -110,6 +165,7 @@ export default function ArtistPage() {
           </CardGrid>
         </Section>
       )}
+      {a.info && (a.info.bio || a.info.genres || a.info.life_span) && <About info={a.info} />}
     </div>
   );
 }

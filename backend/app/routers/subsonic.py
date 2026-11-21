@@ -1011,13 +1011,34 @@ def save_play_queue(c: Ctx) -> dict:
 
 @method("getArtistInfo", "getArtistInfo2")
 def get_artist_info(c: Ctx) -> dict:
+    from ..models import ArtistMeta  # noqa: PLC0415
+
     key = "artistInfo2" if c.p.get("__method") == "getartistinfo2" else "artistInfo"
-    return {key: {"biography": "", "musicBrainzId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": ""}}
+    info = {"biography": "", "musicBrainzId": "", "smallImageUrl": "", "mediumImageUrl": "", "largeImageUrl": ""}
+    try:
+        kind, num = _parse_id(c.p.get("id") or "", "ar")
+    except SubsonicError:
+        kind, num = "", 0
+    m = c.db.get(ArtistMeta, num) if kind == "ar" else None
+    if m is not None and m.status in ("found", "manual"):
+        info["biography"] = m.bio
+        info["musicBrainzId"] = m.mbid or ""
+        if m.bio_url:
+            info["lastFmUrl"] = m.bio_url  # у клиентов это ссылка «подробнее»
+    return {key: info}
 
 
 @method("getAlbumInfo", "getAlbumInfo2")
 def get_album_info(c: Ctx) -> dict:
-    return {"albumInfo": {"notes": "", "musicBrainzId": ""}}
+    from ..models import AlbumMeta  # noqa: PLC0415
+
+    try:
+        kind, num = _parse_id(c.p.get("id") or "", "al")
+    except SubsonicError:
+        kind, num = "", 0
+    m = c.db.get(AlbumMeta, num) if kind == "al" else None
+    mbid = m.release_mbid if m is not None and m.status in ("found", "manual") else ""
+    return {"albumInfo": {"notes": "", "musicBrainzId": mbid or ""}}
 
 
 @method("getTopSongs")
@@ -1298,6 +1319,13 @@ def _cover(c: Ctx) -> Response:
         track = c.db.get(Track, num)
         album = track.album if track else None
     elif kind == "ar":
+        from ..metadata import artist_image_path  # noqa: PLC0415
+        from ..models import ArtistMeta  # noqa: PLC0415
+
+        meta = c.db.get(ArtistMeta, num)
+        photo = artist_image_path(meta, size) if meta is not None else None
+        if photo is not None:
+            return image_response(photo)
         album = c.db.scalars(
             select(Album)
             .where(Album.artist_id == num, Album.library_id.in_(libs or [-1]), Album.cover.is_not(None))

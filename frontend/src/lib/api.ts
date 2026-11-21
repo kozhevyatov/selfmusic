@@ -105,7 +105,99 @@ export type AlbumDetail = Album & {
   more_by_artist: Album[];
   library_name: string;
   can_edit: boolean;
+  /** что нашлось в MusicBrainz; status — только для администратора */
+  mb: { release_mbid: string | null; status: MetaStatus | null; cover_from_meta: boolean };
 };
+
+/** pending — ещё не проверяли; found — найдено само; manual — выбрано вручную; ignored — «не искать» */
+export type MetaStatus = "pending" | "found" | "manual" | "notfound" | "error" | "ignored";
+
+export type ArtistInfo = {
+  mbid: string | null;
+  name: string;
+  disambiguation: string;
+  country: string;
+  life_span: string;
+  genres: string;
+  bio: string;
+  bio_lang: string;
+  bio_url: string;
+  image_source: string;
+};
+
+export type AlbumMetaState = {
+  status: MetaStatus;
+  source: string;
+  release_mbid: string | null;
+  release_group_mbid: string | null;
+  title: string;
+  artist: string;
+  year: number | null;
+  genre: string;
+  cover_from_meta: boolean;
+  error: string | null;
+  checked_at: string | null;
+  query: { title: string; artist: string };
+};
+
+export type ReleaseCandidate = {
+  id: string;
+  title: string;
+  artist: string;
+  date: string;
+  year: number | null;
+  country: string;
+  status: string;
+  track_count: number;
+  media: string;
+  type: string;
+  score: number;
+  disambiguation: string;
+  cover: string;
+};
+
+export type ArtistMetaState = {
+  status: MetaStatus;
+  source: string;
+  mbid: string | null;
+  info: ArtistInfo | null;
+  image: string | null;
+  error: string | null;
+  checked_at: string | null;
+  query: string;
+};
+
+export type ArtistCandidate = {
+  id: string;
+  name: string;
+  sort_name: string;
+  disambiguation: string;
+  country: string;
+  type: string;
+  life_span: string;
+  score: number;
+  aliases: string[];
+};
+
+export type MetaAdminStatus = {
+  running: boolean;
+  current: string | null;
+  done_session: number;
+  last_error: string | null;
+  paused_reason: string;
+  enabled: boolean;
+  covers: boolean;
+  artists: boolean;
+  fill: boolean;
+  lang: string;
+  acoustid_key: string;
+  fpcalc: boolean;
+  album_stats: { total: number; found: number; notfound: number; error: number; ignored: number; covers: number };
+  artist_stats: { total: number; found: number; notfound: number; error: number; bios: number; photos: number };
+  track_stats: { untagged: number; found: number; notfound: number };
+};
+
+export type MetaSettingsPatch = Partial<Pick<MetaAdminStatus, "enabled" | "covers" | "artists" | "fill" | "lang" | "acoustid_key">>;
 
 export type Artist = { id: number; name: string; album_count: number; cover: string | null; starred: boolean };
 
@@ -162,6 +254,8 @@ export type ArtistDetail = Artist & {
   appears_on: Album[];
   top_tracks: Track[];
   track_count: number;
+  info: ArtistInfo | null;
+  meta_status: MetaStatus | null;
 };
 
 export type Home = {
@@ -899,6 +993,21 @@ export const api = {
     },
   },
 
+  /** Сведения из MusicBrainz: ручной выбор релиза и исполнителя (администратор) */
+  meta: {
+    album: (id: number) => request<AlbumMetaState>(`/api/albums/${id}/meta`),
+    searchReleases: (id: number, q: string, artist: string) =>
+      request<ReleaseCandidate[]>(`/api/albums/${id}/meta/search${qs({ q, artist })}`),
+    chooseRelease: (id: number, data: { release?: string; auto?: boolean }) =>
+      request<AlbumMetaState>(`/api/albums/${id}/meta`, { method: "POST", body: json(data) }),
+    ignoreAlbum: (id: number) => request<AlbumMetaState>(`/api/albums/${id}/meta`, { method: "DELETE" }),
+    artist: (id: number) => request<ArtistMetaState>(`/api/artists/${id}/meta`),
+    searchArtists: (id: number, q: string) => request<ArtistCandidate[]>(`/api/artists/${id}/meta/search${qs({ q })}`),
+    chooseArtist: (id: number, data: { artist?: string; auto?: boolean }) =>
+      request<ArtistMetaState>(`/api/artists/${id}/meta`, { method: "POST", body: json(data) }),
+    ignoreArtist: (id: number) => request<ArtistMetaState>(`/api/artists/${id}/meta`, { method: "DELETE" }),
+  },
+
   admin: {
     settings: () => request<AdminSettings>("/api/admin/settings"),
     updateSettings: (data: Partial<AdminSettings>) =>
@@ -936,6 +1045,9 @@ export const api = {
       request<AnalysisStatus>("/api/admin/analysis", { method: "PUT", body: json(data) }),
     runAnalysis: () => request<AnalysisStatus>("/api/admin/analysis/run", { method: "POST" }),
     stopAnalysis: () => request<AnalysisStatus>("/api/admin/analysis/stop", { method: "POST" }),
+    meta: () => request<MetaAdminStatus>("/api/admin/meta"),
+    updateMeta: (data: MetaSettingsPatch) => request<MetaAdminStatus>("/api/admin/meta", { method: "PUT", body: json(data) }),
+    retryMeta: (everything = false) => request<MetaAdminStatus>("/api/admin/meta/retry", { method: "POST", body: json({ everything }) }),
     createLibrary: (data: { name: string; path: string; default_access: boolean; kind?: "music" | "audiobooks" }) =>
       request<AdminLibrary>("/api/admin/libraries", { method: "POST", body: json(data) }),
     updateLibrary: (id: number, data: Partial<Pick<AdminLibrary, "name" | "path" | "enabled" | "default_access" | "kind">>) =>

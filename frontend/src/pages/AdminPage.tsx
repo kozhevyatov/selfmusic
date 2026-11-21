@@ -25,7 +25,15 @@ import { Dialog } from "@/components/ui/dialog";
 import { Field, Input, Select } from "@/components/ui/input";
 import { Badge, Card, ErrorBox, PageLoader, Progress } from "@/components/ui/misc";
 import { Segmented, Switch } from "@/components/ui/switch";
-import { api, updateCurrentUser, type AdminLibrary, type AdminUser, type DuplicatesResult, type UploadMode } from "@/lib/api";
+import {
+  api,
+  updateCurrentUser,
+  type AdminLibrary,
+  type AdminUser,
+  type DuplicatesResult,
+  type MetaSettingsPatch,
+  type UploadMode,
+} from "@/lib/api";
 import { Link } from "@/lib/router";
 import { useAuth } from "@/lib/auth";
 import { dialogs } from "@/lib/dialogs";
@@ -126,6 +134,161 @@ function AnalysisCard() {
   );
 }
 
+const META_LANGS: [string, string][] = [
+  ["ru", "Русский"],
+  ["en", "English"],
+  ["uk", "Українська"],
+  ["be", "Беларуская"],
+  ["kk", "Қазақша"],
+  ["de", "Deutsch"],
+  ["fr", "Français"],
+  ["es", "Español"],
+  ["it", "Italiano"],
+  ["pl", "Polski"],
+];
+
+/** Сведения из интернета: MusicBrainz, Cover Art Archive, Википедия, AcoustID. */
+function MetaCard() {
+  const q = useQuery(["admin", "meta"], api.admin.meta, { refetchInterval: 4000, staleTime: 0 });
+  const m = q.data;
+  const [key, setKey] = useState("");
+  useEffect(() => {
+    if (m) setKey(m.acoustid_key);
+  }, [m?.acoustid_key]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!m) return null;
+  const set = async (patch: MetaSettingsPatch, msg?: string) => {
+    try {
+      await api.admin.updateMeta(patch);
+      invalidate(["admin", "meta"]);
+      if (msg) toast.success(msg);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+  const al = m.album_stats;
+  const ar = m.artist_stats;
+  const tr = m.track_stats;
+  const checked = al.found + al.notfound + al.error + al.ignored;
+  const pct = al.total ? Math.min(100, Math.round((checked / al.total) * 100)) : 0;
+  const n = (v: number) => v.toLocaleString("ru-RU");
+  const Row = ({ label, hint, value, onChange }: { label: string; hint: string; value: boolean; onChange: (v: boolean) => void }) => (
+    <div className="flex items-start justify-between gap-6">
+      <div>
+        <div className="text-sm font-bold">{label}</div>
+        <div className="text-[13px] text-muted">{hint}</div>
+      </div>
+      <Switch label={label} checked={value} disabled={!m.enabled} onChange={onChange} />
+    </div>
+  );
+  return (
+    <Card className="flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <div className="text-[16px] font-extrabold">Сведения из интернета</div>
+          <p className="mt-1 text-sm text-muted">
+            Обложки, год, жанр и биографии исполнителей из MusicBrainz, Cover Art Archive и Википедии; треки без тегов — по звуку через
+            AcoustID. Файлы с музыкой не меняются, свои обложки и теги всегда главнее. Сервер обращается к этим сайтам не чаще раза в
+            секунду.
+          </p>
+        </div>
+        <Switch label="Сведения из интернета" checked={m.enabled} onChange={(v) => set({ enabled: v }, v ? "Поиск сведений включён" : "Поиск сведений выключен")} />
+      </div>
+      <div className="flex flex-col gap-3 border-t pt-4">
+        <Row label="Обложки" hint="Для альбомов без своей обложки — из Cover Art Archive." value={m.covers} onChange={(v) => set({ covers: v })} />
+        <Row label="Год и жанр" hint="Только если их нет в тегах." value={m.fill} onChange={(v) => set({ fill: v })} />
+        <Row
+          label="Исполнители"
+          hint="Биография из Википедии и фото с Викисклада на странице исполнителя."
+          value={m.artists}
+          onChange={(v) => set({ artists: v })}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm font-bold">Язык биографий</div>
+          <div className="w-44">
+            <Select aria-label="Язык биографий" value={m.lang} disabled={!m.enabled || !m.artists} onChange={(e) => set({ lang: e.target.value })}>
+              {META_LANGS.map(([code, label]) => (
+                <option key={code} value={code}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            set({ acoustid_key: key.trim() }, key.trim() ? "Ключ AcoustID сохранён" : "Распознавание по звуку выключено");
+          }}
+          className="flex flex-wrap items-end gap-3"
+        >
+          <div className="min-w-60 flex-1">
+            <Field
+              id="acoustid"
+              label="Ключ AcoustID (необязательно)"
+              hint={
+                <>
+                  Для альбомов, которые не нашлись по названию, и треков без тегов. Бесплатный ключ приложения —{" "}
+                  <a href="https://acoustid.org/new-application" target="_blank" rel="noreferrer" className="underline hover:text-fg">
+                    acoustid.org/new-application
+                  </a>
+                  .{!m.fpcalc && " На сервере нет fpcalc — пересоберите образ."}
+                </>
+              }
+            >
+              <Input id="acoustid" value={key} autoComplete="off" spellCheck={false} onChange={(e) => setKey(e.target.value)} disabled={!m.enabled} />
+            </Field>
+          </div>
+          <Button type="submit" variant="secondary" disabled={!m.enabled || key.trim() === m.acoustid_key}>
+            Сохранить
+          </Button>
+        </form>
+      </div>
+      {m.enabled && (
+        <div className="flex flex-col gap-2 border-t pt-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
+            <span>
+              Альбомы: проверено <b>{n(checked)}</b> из {n(al.total)} · найдено {n(al.found)}
+              {al.covers > 0 && <> · обложек {n(al.covers)}</>}
+            </span>
+            <span className="text-faint">{pct}%</span>
+          </div>
+          <Progress value={pct} />
+          <div className="text-[13px] text-muted">
+            Исполнители: найдено {n(ar.found)} из {n(ar.total)} · биографий {n(ar.bios)} · фото {n(ar.photos)}
+            {tr.untagged + tr.found > 0 && (
+              <>
+                {" "}
+                · треков без тегов {n(tr.untagged)}
+                {tr.found > 0 && <>, узнано по звуку {n(tr.found)}</>}
+              </>
+            )}
+          </div>
+          <div className="truncate text-[13px] text-faint">{m.running ? m.current ?? "…" : m.paused_reason || "Ожидает"}</div>
+          {(al.notfound > 0 || al.error > 0 || ar.notfound > 0 || ar.error > 0) && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  api.admin.retryMeta().then(() => {
+                    invalidate(["admin", "meta"]);
+                    toast.success("Ненайденное проверим заново");
+                  })
+                }
+              >
+                <RefreshCw className="size-4" /> Проверить ненайденное заново
+              </Button>
+            </div>
+          )}
+          <p className="text-[12px] text-faint">
+            Найти вручную или исправить: страница альбома → «Ещё» → «Сведения из MusicBrainz», страница исполнителя → «MusicBrainz».
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function GeneralTab() {
   const s = useQuery(["admin", "settings"], api.admin.settings);
   const [name, setName] = useState("");
@@ -216,6 +379,7 @@ function GeneralTab() {
         </div>
       </Card>
       <AnalysisCard />
+      <MetaCard />
     </div>
   );
 }

@@ -18,6 +18,8 @@ CONFIG_FILE = DATA_DIR / "config.json"
 SECRET_FILE = DATA_DIR / "secret.key"
 CACHE_DIR = DATA_DIR / "cache"
 COVER_CACHE = CACHE_DIR / "covers"
+# Найденное в интернете: обложки из Cover Art Archive и фото исполнителей (см. app/metadata.py)
+META_DIR = DATA_DIR / "meta"
 
 # Корень, внутри которого админ выбирает папки с музыкой (обзор папок в админке).
 # В docker-compose сюда монтируются папки NAS только для чтения: /volume1/music:/music/music:ro

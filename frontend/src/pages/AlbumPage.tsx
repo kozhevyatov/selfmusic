@@ -2,8 +2,8 @@ import { DownloadButton } from "@/components/DownloadButton";
 import { AlbumCard, CardGrid } from "@/components/Cards";
 import { Cover } from "@/components/Cover";
 import { HeartFill, PlayFill } from "@/components/icon";
-import { Download, Ellipsis, Heart, Link as LinkIcon, ListEnd, ListPlus, ListStart, Pencil, Shuffle } from "@/components/icons";
-import { useCanShare } from "@/lib/auth";
+import { Disc3, Download, Ellipsis, ExternalLink, Heart, Link as LinkIcon, ListEnd, ListPlus, ListStart, Pencil, Shuffle } from "@/components/icons";
+import { useAuth, useCanShare } from "@/lib/auth";
 import { Section } from "@/components/Section";
 import { TrackList } from "@/components/TrackList";
 import { Badge, ErrorBox, PageLoader } from "@/components/ui/misc";
@@ -25,6 +25,7 @@ export default function AlbumPage() {
   const a = q.data;
   const palette = usePalette(coverUrl(a?.cover, 96), a ? a.name + a.artist : "");
   const canShare = useCanShare();
+  const isAdmin = Boolean(useAuth().user?.is_admin);
 
   if (q.isLoading) return <PageLoader />;
   if (q.error || !a) return <ErrorBox error={q.error} />;
@@ -124,6 +125,7 @@ export default function AlbumPage() {
               ? [{ label: "Поделиться ссылкой", icon: <LinkIcon />, onSelect: () => dialogs.share({ kind: "album", item_id: a.id, label: `${a.artist} — ${a.name}` }) }]
               : []),
             ...(a.can_edit ? [{ label: "Редактировать теги и обложку", icon: <Pencil />, onSelect: () => dialogs.editAlbum(a.id) }] : []),
+            ...(isAdmin ? [{ label: "Сведения из MusicBrainz…", icon: <Disc3 />, onSelect: () => dialogs.albumMeta(a.id) }] : []),
             {
               label: "Скачать треки",
               icon: <Download />,
@@ -151,8 +153,21 @@ export default function AlbumPage() {
 
       <TrackList tracks={a.tracks} numbers="track" discs canEdit={a.can_edit} selectable className="-mx-2 sm:-mx-3" />
 
-      <p className="text-[13px] text-faint">
-        Папка «{a.library_name}» · добавлен {new Date(a.created_at.endsWith("Z") ? a.created_at : a.created_at + "Z").toLocaleDateString("ru-RU")}
+      <p className="flex flex-wrap items-center gap-x-1 text-[13px] text-faint">
+        <span>
+          Папка «{a.library_name}» · добавлен {new Date(a.created_at.endsWith("Z") ? a.created_at : a.created_at + "Z").toLocaleDateString("ru-RU")}
+        </span>
+        {a.mb?.release_mbid && (
+          <a
+            href={`https://musicbrainz.org/release/${a.mb.release_mbid}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 hover:text-fg hover:underline"
+          >
+            · MusicBrainz <ExternalLink className="size-3" />
+          </a>
+        )}
+        {a.mb?.cover_from_meta && <span>· обложка: Cover Art Archive</span>}
       </p>
 
       {a.more_by_artist.length > 0 && (

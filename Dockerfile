@@ -9,9 +9,10 @@ RUN npm run build
 # ---------- 2. Бэкенд + статика + ffmpeg ----------
 FROM python:3.12-slim
 
-# ffmpeg — для перекодирования потока (MP3/Opus/AAC на лету)
+# ffmpeg — для перекодирования потока (MP3/Opus/AAC на лету);
+# fpcalc (libchromaprint-tools) — «отпечаток» звука для распознавания треков через AcoustID
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg libchromaprint-tools \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

@@ -431,3 +431,69 @@ class Bookmark(Base):
     position: Mapped[float] = mapped_column(Float, default=0)
     comment: Mapped[str] = mapped_column(String(1000), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# ---------------- сведения из интернета (MusicBrainz, Cover Art Archive, Википедия, AcoustID) ----------------
+
+
+class AlbumMeta(Base):
+    """Найденный в MusicBrainz релиз альбома: обложка, год, жанр. Файлы музыки не меняются."""
+
+    __tablename__ = "album_meta"
+
+    album_id: Mapped[int] = mapped_column(ForeignKey("albums.id", ondelete="CASCADE"), primary_key=True)
+    # found — найден автоматически; manual — выбран вручную; notfound; error; ignored — «не искать»
+    status: Mapped[str] = mapped_column(String(16), default="notfound", index=True)
+    # tags — MBID из тегов; search — поиск по названию; acoustid — по звуку; manual
+    source: Mapped[str] = mapped_column(String(16), default="")
+    release_mbid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    release_group_mbid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    artist_mbid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    title: Mapped[str] = mapped_column(String(512), default="")
+    artist: Mapped[str] = mapped_column(String(512), default="")
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    genre: Mapped[str] = mapped_column(String(128), default="")
+    # имя файла обложки в DATA_DIR/meta/covers
+    cover_file: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ArtistMeta(Base):
+    """Исполнитель в MusicBrainz + биография и фото из Википедии / Викисклада."""
+
+    __tablename__ = "artist_meta"
+
+    artist_id: Mapped[int] = mapped_column(ForeignKey("artists.id", ondelete="CASCADE"), primary_key=True)
+    # pending — MBID известен из альбома, данные ещё не скачаны; остальное — как у AlbumMeta
+    status: Mapped[str] = mapped_column(String(16), default="notfound", index=True)
+    source: Mapped[str] = mapped_column(String(16), default="")
+    mbid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    mb_name: Mapped[str] = mapped_column(String(512), default="")
+    disambiguation: Mapped[str] = mapped_column(String(512), default="")
+    country: Mapped[str] = mapped_column(String(8), default="")
+    life_span: Mapped[str] = mapped_column(String(64), default="")
+    genres: Mapped[str] = mapped_column(String(512), default="")  # через запятую
+    bio: Mapped[str] = mapped_column(LongText, default="")
+    bio_lang: Mapped[str] = mapped_column(String(8), default="")
+    bio_url: Mapped[str] = mapped_column(String(1024), default="")
+    # фото: имя файла в DATA_DIR/meta/artists и страница файла на Викискладе (для указания автора)
+    image_file: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    image_source: Mapped[str] = mapped_column(String(1024), default="")
+    error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TrackMatch(Base):
+    """Трек без тегов, узнанный по звуку (AcoustID): название и исполнитель."""
+
+    __tablename__ = "track_match"
+
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id", ondelete="CASCADE"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), default="notfound", index=True)
+    recording_mbid: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    title: Mapped[str] = mapped_column(String(512), default="")
+    artist: Mapped[str] = mapped_column(String(512), default="")
+    score: Mapped[float] = mapped_column(Float, default=0)
+    error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

@@ -174,6 +174,13 @@ def index_file(
     album = album_for(db, lib, rel, meta, ctx)
     ctx.touched.add(album.id)
     artist_name = clean(meta.artist or meta.album_artist, 512).strip() or UNKNOWN_ARTIST
+    suggested = None
+    if track is not None and lib.kind == "music" and not meta.title and artist_name == UNKNOWN_ARTIST:
+        from .metadata import track_suggestion  # noqa: PLC0415 — трек без тегов, узнанный по звуку (AcoustID)
+
+        suggested = track_suggestion(db, track.id)
+        if suggested and suggested[1]:
+            artist_name = clean(suggested[1], 512)
     if lib.kind == "audiobooks":
         # у книги «исполнитель» — автор: из структуры Автор/Серия/Книга, иначе из тегов
         path_author = split_path(album.folder)[0] if album.folder else ""
@@ -185,7 +192,7 @@ def index_file(
     fname = abs_path.name
     track.album_id = album.id
     track.artist_id = artist_id
-    track.title = clean(meta.title or os.path.splitext(fname)[0], 512) or "Без названия"
+    track.title = clean(meta.title or (suggested[0] if suggested else "") or os.path.splitext(fname)[0], 512) or "Без названия"
     track.artist_name = clean(artist_name, 512)
     track.album_artist_name = clean(meta.album_artist, 512)
     track.track_no = meta.track_no or _track_from_name(fname)
@@ -676,13 +683,20 @@ def finalize_album(db: Session, album_id: int, root: Path, is_new: bool, artist_
         album.cover = "file:" + cover_file.relative_to(root).as_posix()
     else:
         embedded = next((t for t in sorted(tracks, key=lambda t: (t.disc_no or 1, t.track_no or 0)) if t.has_cover), None)
-        album.cover = f"embed:{embedded.id}" if embedded else None
+        if embedded:
+            album.cover = f"embed:{embedded.id}"
+        elif not (album.cover or "").startswith("meta:"):  # найденную в интернете (app/metadata.py) сохраняем
+            album.cover = None
     if is_new:
         newest = max(t.mtime for t in tracks)
         album.created_at = min(datetime.fromtimestamp(newest, timezone.utc), utcnow())
     lib = db.get(Library, album.library_id)
     if lib is not None and lib.kind == "audiobooks":
         _finalize_book(db, album, tracks, root, artist_cache)
+    elif album.year is None or not album.genre:
+        from .metadata import fill_album  # noqa: PLC0415 — год и жанр из MusicBrainz, если их нет в тегах
+
+        fill_album(db, album)
     if is_new or tuple(getattr(album, f) for f in fields) != before:
         album.updated_at = utcnow()  # от него зависит адрес обложки — меняем только при изменениях
 

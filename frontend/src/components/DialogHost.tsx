@@ -7,6 +7,7 @@ import { navigate } from "@/lib/router";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { Cover } from "./Cover";
+import { AlbumMetaDialog, ArtistMetaDialog } from "./MetaDialogs";
 import { ShareDialog } from "./ShareDialog";
 import { Check, Image as ImageIcon, LoaderCircle, Plus, TriangleAlert } from "./icons";
 import { Button } from "./ui/button";
@@ -418,6 +419,10 @@ export function DialogHost() {
       return <TagEditor trackId={state.trackId} />;
     case "album-tags":
       return <AlbumTagEditor albumId={state.albumId} />;
+    case "album-meta":
+      return <AlbumMetaDialog albumId={state.albumId} />;
+    case "artist-meta":
+      return <ArtistMetaDialog artistId={state.artistId} />;
     case "confirm":
       return <Confirm {...state} />;
     case "share":
