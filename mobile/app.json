@@ -8,6 +8,24 @@
     "scheme": "selfmusic",
     "userInterfaceStyle": "automatic",
     "backgroundColor": "#0d0d0f",
+    "ios": {
+      "bundleIdentifier": "ru.nskarl.selfmusic",
+      "buildNumber": "1",
+      "supportsTablet": true,
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ],
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
+        },
+        "NSLocalNetworkUsageDescription": "SelfMusic подключается к вашему серверу в домашней сети."
+      }
+    },
     "android": {
       "package": "ru.nskarl.selfmusic",
       "versionCode": 2,
@@ -49,7 +67,8 @@
           "backgroundColor": "#0d0d0f"
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {

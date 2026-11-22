@@ -2,7 +2,7 @@ import Constants from "expo-constants";
 import { StatusBar } from "expo-status-bar";
 import * as SystemUI from "expo-system-ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, BackHandler, Linking, StyleSheet, View } from "react-native";
+import { ActivityIndicator, AppState, BackHandler, Linking, Platform, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { offline, type Collection, type OfflineEvent, type TrackData } from "./offline";
@@ -39,7 +39,7 @@ export function WebScreen({ session, onLogout }: { session: Session; onLogout: (
   const inject = useMemo(
     () =>
       `window.__SELFMUSIC_NATIVE__=${JSON.stringify({
-        platform: "android",
+        platform: Platform.OS,
         appVersion: Constants.expoConfig?.version ?? "1",
         refreshToken: session.refresh,
         // WebView — на весь экран, под системными панелями: отступы сайт берёт отсюда
@@ -236,6 +236,13 @@ export function WebScreen({ session, onLogout }: { session: Session; onLogout: (
           if (e.nativeEvent.statusCode >= 500 && e.nativeEvent.url.replace(/\/$/, "") === session.server) setFailed(`Ошибка сервера ${e.nativeEvent.statusCode}`);
         }}
         onRenderProcessGone={() => web.current?.reload()}
+        // iOS: свайп от края — «назад» по истории страницы; без «резиновой» прокрутки; WebView под системными панелями
+        allowsBackForwardNavigationGestures
+        bounces={false}
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustContentInsets={false}
+        sharedCookiesEnabled
+        onContentProcessDidTerminate={() => web.current?.reload()}
         onShouldStartLoadWithRequest={(req) => {
           // чужие сайты — во внешнем браузере
           const origin = /^(https?:\/\/[^/]+)/i.exec(req.url)?.[1]?.toLowerCase();
